@@ -1,5 +1,7 @@
 # Parrot (Rust rewrite)
 
+![Parrot](parrot-app/assets/parrot.jpeg)
+
 Desktop writing app built with egui/eframe. The runnable binary is `parrot-app`; the other crates (`parrot-core`, `-container`, `-markup`, `-style`, `-syntax`, `-export`, `-import`) are libraries it wires together.
 
 `rust-toolchain.toml` pins Rust **1.99.1** with the `x86_64-pc-windows-msvc` target, so Windows is the primary platform.
