@@ -22,6 +22,7 @@ use crate::keyword_manager;
 use crate::language::Language;
 use crate::layout::{Panel, PanelLayout, INSPECTOR_WIDTH, LIBRARY_WIDTH, SHEET_LIST_WIDTH};
 use crate::os::{NativeOs, Os};
+use crate::personal_dictionary::PersonalDictionary;
 use crate::preferences::Preferences;
 use crate::search_ui::SearchUiState;
 use crate::selection::{self, DraggedNodes, DropZone};
@@ -33,7 +34,7 @@ use crate::tokens::{self, TypeToken};
 use crate::toolbar::{self, ParagraphStyle, ToolbarAction};
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat, TextWrapping};
 use egui::{Align, Align2, Color32, Id, Layout, Margin, Rect, RichText, Sense, Ui};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -414,6 +415,11 @@ pub struct ParrotApp {
     text_checking: bool,
     /// Proofing cards the user dismissed this session: (sheet, finding fingerprint).
     dismissed_findings: BTreeSet<(NodePath, String)>,
+    /// The finding the editor's right-click menu opened on, while it stays open.
+    menu_finding: Option<MenuFinding>,
+    /// Spelling suggestions by (language, lowercase word): suggestion search walks the whole
+    /// dictionary, so the editor's context menu serves these from cache, computed on demand.
+    suggestion_cache: HashMap<(Language, String), Vec<String>>,
     /// The expanded proofing card: (sheet, finding start byte).
     proofing_selected: Option<(NodePath, usize)>,
     proofing_filter: Option<AnnotationKind>,
@@ -488,6 +494,8 @@ impl Default for ParrotApp {
             focus_mode: false,
             text_checking: true,
             dismissed_findings: BTreeSet::new(),
+            menu_finding: None,
+            suggestion_cache: HashMap::new(),
             proofing_selected: None,
             proofing_filter: None,
             inspector_tab: InspectorTab::Statistics,
@@ -2189,7 +2197,12 @@ impl ParrotApp {
                 .map(|(p, _)| p)
                 .collect()
         };
-        let rows = sheet_list::rows_with(&self.state, &paths, &|p| self.language_of(p));
+        let rows = sheet_list::rows_with(
+            &self.state,
+            &paths,
+            &|p| self.language_of(p),
+            &self.dismissed_findings,
+        );
         let footer = sheet_list::footer_label(&self.state, &selection, rows.len());
         let order: Vec<NodePath> = rows.iter().map(|r| r.path.clone()).collect();
         // A listed project shows its sections as headings, with their sheets indented below.
@@ -2664,7 +2677,7 @@ impl ParrotApp {
 
     fn single_sheet(&mut self, ui: &mut Ui, path: &NodePath) {
         let annotations = if self.text_checking {
-            annotations::check_in(&self.editor_buffer, self.language_of(path))
+            self.visible_annotations(path, &self.editor_buffer)
         } else {
             Vec::new()
         };
@@ -2680,6 +2693,9 @@ impl ParrotApp {
         };
         let mut buffer = std::mem::take(&mut self.editor_buffer);
         let mut output = None;
+        // Taken for the frame so the editor closures can borrow them without borrowing `self`.
+        let mut suggestion_cache = std::mem::take(&mut self.suggestion_cache);
+        let mut menu_finding = std::mem::take(&mut self.menu_finding);
         egui::ScrollArea::vertical()
             .id_salt("single-sheet")
             .auto_shrink([false, false])
@@ -2694,9 +2710,18 @@ impl ParrotApp {
                         width,
                         jump,
                         false,
+                        ProofingMenu {
+                            annotations: &annotations,
+                            language: self.language_of(path),
+                            personal: &self.state.personal_dictionary,
+                            suggestion_cache: &mut suggestion_cache,
+                            open: &mut menu_finding,
+                        },
                     ));
                 });
             });
+        self.suggestion_cache = suggestion_cache;
+        self.menu_finding = menu_finding;
         self.editor_buffer = buffer;
         if jump.is_some() {
             self.pending_jump = None;
@@ -2710,6 +2735,17 @@ impl ParrotApp {
             }
             if let Some((a, b)) = out.split {
                 self.split_sheet(path, a, b);
+            }
+            if let Some((range, fix)) = out.apply {
+                self.apply_fix(path, range, &fix);
+                self.proofing_selected = None;
+            }
+            if let Some(word) = out.add_word {
+                self.add_word_to_dictionary(&word);
+            }
+            if let Some(finding) = out.dismiss {
+                let buffer = self.editor_buffer.clone();
+                self.dismiss_finding(path, &buffer, &finding);
             }
         }
     }
@@ -2733,7 +2769,7 @@ impl ParrotApp {
             .iter()
             .map(|(p, _)| {
                 if self.text_checking {
-                    annotations::check_in(&self.container_buffers[p], self.language_of(p))
+                    self.visible_annotations(p, &self.container_buffers[p])
                 } else {
                     Vec::new()
                 }
@@ -2762,6 +2798,12 @@ impl ParrotApp {
         let mut changed = Vec::new();
         let mut focused = None;
         let mut split: Option<(NodePath, (usize, usize))> = None;
+        let mut apply = Vec::new();
+        let mut add_words = Vec::new();
+        let mut dismiss = Vec::new();
+        // Taken for the frame so the editor closures can borrow them without borrowing `self`.
+        let mut suggestion_cache = std::mem::take(&mut self.suggestion_cache);
+        let mut menu_finding = std::mem::take(&mut self.menu_finding);
         egui::ScrollArea::vertical()
             .id_salt("sheet-flow")
             .auto_shrink([false, false])
@@ -2799,12 +2841,28 @@ impl ParrotApp {
                                     width,
                                     sheet_jump,
                                     self.flow_all_selected,
+                                    ProofingMenu {
+                                        annotations: &checks[i],
+                                        language: self.language_of(path),
+                                        personal: &self.state.personal_dictionary,
+                                        suggestion_cache: &mut suggestion_cache,
+                                        open: &mut menu_finding,
+                                    },
                                 );
                                 if out.changed {
                                     changed.push(path.clone());
                                 }
                                 if let Some(range) = out.split {
                                     split = Some((path.clone(), range));
+                                }
+                                if let Some((range, fix)) = out.apply {
+                                    apply.push((path.clone(), range, fix));
+                                }
+                                if let Some(word) = out.add_word {
+                                    add_words.push(word);
+                                }
+                                if let Some(finding) = out.dismiss {
+                                    dismiss.push((path.clone(), finding));
                                 }
                                 if out.has_focus {
                                     focused = Some(path.clone());
@@ -2814,6 +2872,8 @@ impl ParrotApp {
                     }
                 });
             });
+        self.suggestion_cache = suggestion_cache;
+        self.menu_finding = menu_finding;
         self.container_buffers = buffers;
         if jump.is_some() {
             self.pending_jump = None;
@@ -2823,6 +2883,18 @@ impl ParrotApp {
         }
         for path in changed {
             self.commit_buffer(&path);
+        }
+        for (path, range, fix) in apply {
+            self.apply_fix(&path, range, &fix);
+            self.proofing_selected = None;
+        }
+        for word in add_words {
+            self.add_word_to_dictionary(&word);
+        }
+        for (path, finding) in dismiss {
+            if let Some(buffer) = self.container_buffers.get(&path).cloned() {
+                self.dismiss_finding(&path, &buffer, &finding);
+            }
         }
         if let Some((path, (a, b))) = split {
             self.split_sheet(&path, a, b);
@@ -3028,13 +3100,13 @@ impl ParrotApp {
     }
 
     /// Every finding across the editor's sheets as one list, in editor (flow) order, each
-    /// tagged with its sheet's path and title.
+    /// tagged with its sheet's path and title. Already minus dismissed findings.
     fn proofing_findings(&self) -> Vec<(NodePath, String, Annotation)> {
         self.visible_sheet_paths()
             .into_iter()
             .filter_map(|p| {
                 let title = self.sheet(&p)?.title.clone();
-                let found = annotations::check_in(&self.sheet_buffer(&p)?, self.language_of(&p));
+                let found = self.visible_annotations(&p, &self.sheet_buffer(&p)?);
                 Some(
                     found
                         .into_iter()
@@ -3127,10 +3199,48 @@ impl ParrotApp {
         self.commit_buffer(path);
     }
 
-    /// Stable identity of a finding that survives edits elsewhere in the sheet.
-    fn finding_key(buffer: &str, a: &Annotation) -> String {
-        let (before, span, after) = annotations::context(buffer, &a.byte_range, 12);
-        format!("{}|{before}|{span}|{after}", a.title)
+    /// The finding covering `byte` (a caret offset), if any. The end counts as inside so a
+    /// caret sitting right after a word still matches it.
+    fn finding_at(annotations: &[Annotation], byte: usize) -> Option<&Annotation> {
+        annotations
+            .iter()
+            .find(|a| a.byte_range.start <= byte && byte <= a.byte_range.end)
+    }
+
+    /// Findings for `path`'s `buffer` minus the ones dismissed this session: what the
+    /// editor underlines and the proofing tab lists.
+    fn visible_annotations(&self, path: &NodePath, buffer: &str) -> Vec<Annotation> {
+        annotations::without_dismissed(
+            buffer,
+            path,
+            annotations::check_in(
+                buffer,
+                self.language_of(path),
+                &self.state.personal_dictionary,
+            ),
+            &self.dismissed_findings,
+        )
+    }
+
+    /// Hides finding `a` (from `buffer`) from the proofing tab until the text changes.
+    fn dismiss_finding(&mut self, path: &NodePath, buffer: &str, finding: &Annotation) {
+        self.dismissed_findings
+            .insert((path.clone(), annotations::fingerprint(buffer, finding)));
+        self.proofing_selected = None;
+    }
+
+    /// Records `word` in the personal dictionary, persists it and reports the outcome.
+    fn add_word_to_dictionary(&mut self, word: &str) {
+        if self.state.add_personal_word(word) {
+            self.suggestion_cache.clear();
+            self.status = match self.state.save_personal_dictionary() {
+                Ok(()) => format!("Added {word:?} to dictionary"),
+                Err(e) => format!("Error saving dictionary: {e}"),
+            };
+        } else {
+            self.status = format!("{word:?} is already in the dictionary");
+        }
+        self.proofing_selected = None;
     }
 
     /// Spelling and grammar findings for every sheet in the editor (§9.3) as cards: title,
@@ -3154,17 +3264,7 @@ impl ParrotApp {
             .into_iter()
             .filter_map(|p| Some((p.clone(), self.sheet_buffer(&p)?)))
             .collect();
-        let findings: Vec<(NodePath, String, Annotation)> = self
-            .proofing_findings()
-            .into_iter()
-            .filter(|(p, _, a)| {
-                buffers.get(p).is_none_or(|b| {
-                    !self
-                        .dismissed_findings
-                        .contains(&(p.clone(), Self::finding_key(b, a)))
-                })
-            })
-            .collect();
+        let findings: Vec<(NodePath, String, Annotation)> = self.proofing_findings();
         if findings.is_empty() {
             Self::no_target(ui, "No spelling or grammar findings.");
             return;
@@ -3198,7 +3298,8 @@ impl ParrotApp {
 
         let mut jump = None;
         let mut accept = None;
-        let mut dismiss = None;
+        let mut add_word = None;
+        let mut dismiss: Option<(NodePath, Annotation)> = None;
         for (path, title, a) in findings
             .iter()
             .filter(|(_, _, a)| self.proofing_filter.is_none_or(|f| f == a.kind))
@@ -3266,8 +3367,13 @@ impl ParrotApp {
                                 accept = Some((path.clone(), a.byte_range.clone(), fix.clone()));
                             }
                         }
+                        if a.kind == AnnotationKind::Spelling
+                            && ui.button("Add to dictionary").clicked()
+                        {
+                            add_word = buffer.get(a.byte_range.clone()).map(str::to_string);
+                        }
                         if ui.button("Dismiss").clicked() {
-                            dismiss = Some((path.clone(), Self::finding_key(buffer, a)));
+                            dismiss = Some((path.clone(), a.clone()));
                         }
                     });
                 }
@@ -3281,9 +3387,13 @@ impl ParrotApp {
             self.apply_fix(&path, range, &fix);
             self.proofing_selected = None;
         }
-        if let Some(key) = dismiss {
-            self.dismissed_findings.insert(key);
-            self.proofing_selected = None;
+        if let Some(word) = add_word {
+            self.add_word_to_dictionary(&word);
+        }
+        if let Some((path, finding)) = dismiss {
+            if let Some(buffer) = buffers.get(&path) {
+                self.dismiss_finding(&path, buffer, &finding);
+            }
         }
         if let Some((path, range)) = jump {
             self.proofing_selected = Some((path.clone(), range.start));
@@ -4529,6 +4639,34 @@ struct SheetEditorOutput {
     has_focus: bool,
     /// "Split Sheet" was chosen in the right-click menu: the selection, as char indices.
     split: Option<(usize, usize)>,
+    /// A finding fix chosen in the right-click menu: byte range in the buffer + replacement.
+    apply: Option<(std::ops::Range<usize>, String)>,
+    /// "Add to dictionary" was chosen in the right-click menu for this word.
+    add_word: Option<String>,
+    /// "Dismiss" was chosen in the right-click menu for this finding.
+    dismiss: Option<Annotation>,
+}
+
+/// A proofing finding latched when the editor's right-click menu opens. The live caret
+/// flickers while the popup is open (focus moves between the editor and the menu, and the
+/// press that picks an item lands outside the word), so an open menu keeps showing the
+/// finding it opened on instead of following the caret.
+#[derive(Clone)]
+struct MenuFinding {
+    annotation: Annotation,
+    word: String,
+    language: Language,
+}
+
+/// Everything the editor's right-click proofing menu needs: this sheet's findings, its
+/// language and personal words, the suggestion cache it fills on demand, and the latched
+/// finding it stays open on.
+struct ProofingMenu<'a> {
+    annotations: &'a [Annotation],
+    language: Language,
+    personal: &'a PersonalDictionary,
+    suggestion_cache: &'a mut HashMap<(Language, String), Vec<String>>,
+    open: &'a mut Option<MenuFinding>,
 }
 
 /// §12.4: the centered inset column — 640px max text width plus side margins, filled with
@@ -4679,6 +4817,10 @@ fn split_title(text: &str) -> String {
 
 /// One sheet's styled `TextEdit` plus its §12.10 paragraph numbers; scrolls to paragraph
 /// `jump` (an Outline click) when given.
+/// The sheet text field with its block decorations, gutter labels and right-click menu
+/// (split sheet + proofing fixes). The parameters come in two groups — editor plumbing, then
+/// the proofing menu state the context menu acts on — which is why this stays one function.
+#[allow(clippy::too_many_arguments)]
 fn sheet_editor(
     ui: &mut Ui,
     id: Id,
@@ -4687,6 +4829,7 @@ fn sheet_editor(
     width: f32,
     jump: Option<usize>,
     highlight_all: bool,
+    proofing: ProofingMenu<'_>,
 ) -> SheetEditorOutput {
     // Live preview: the paragraph the caret is in shows its Markdown, the rest shows formatted.
     let mut style = style.clone();
@@ -4727,8 +4870,13 @@ fn sheet_editor(
         .show(ui);
 
     // Right-click on a selection offers to split the sheet around it; with the whole sheet
-    // selected there's nothing to split, so the entry is disabled.
+    // selected there's nothing to split, so the entry is disabled. Right-click on a
+    // spelling/grammar finding (the click collapses the caret there) offers that finding's
+    // fixes instead.
     let mut split = None;
+    let mut apply = None;
+    let mut add_word = None;
+    let mut dismiss = None;
     let mut selection = output
         .cursor_range
         .map(|r| (r.primary.ccursor.index, r.secondary.ccursor.index))
@@ -4741,16 +4889,94 @@ fn sheet_editor(
             selection = Some((range.primary.index, range.secondary.index));
         }
     }
-    if let Some((a, b)) = selection {
-        let can_split = editor::split_around_selection(buffer, a, b).is_some();
+    let caret_byte = output
+        .cursor_range
+        .map(|r| {
+            buffer
+                .chars()
+                .take(r.primary.ccursor.index)
+                .map(char::len_utf8)
+                .sum()
+        })
+        .filter(|&byte| byte <= buffer.len());
+    let ProofingMenu {
+        annotations,
+        language,
+        personal,
+        suggestion_cache,
+        open,
+    } = proofing;
+    if output.response.secondary_clicked() {
+        // The click that opens the menu: latch the finding under the fresh caret.
+        // While open the menu keeps showing this finding — the live caret flickers as
+        // focus moves between the editor and the popup, and in the sheet flow the other
+        // sheets' editors must not overwrite it.
+        *open = caret_byte
+            .and_then(|byte| ParrotApp::finding_at(annotations, byte))
+            .map(|a| MenuFinding {
+                annotation: a.clone(),
+                word: buffer.get(a.byte_range.clone()).unwrap_or("").to_string(),
+                language,
+            });
+    }
+    let finding = open.as_ref();
+    if finding.is_some() || selection.is_some() {
         output.response.context_menu(|ui| {
-            if ui
-                .add_enabled(can_split, egui::Button::new("Split Sheet"))
-                .on_disabled_hover_text("The whole sheet is selected")
-                .clicked()
-            {
-                split = Some((a, b));
-                ui.close_menu();
+            if let Some(menu) = finding {
+                let a = &menu.annotation;
+                match a.kind {
+                    AnnotationKind::Spelling => {
+                        let key = (menu.language, menu.word.to_lowercase());
+                        if suggestion_cache.len() > 2000 {
+                            suggestion_cache.clear();
+                        }
+                        let suggestions = suggestion_cache
+                            .entry(key)
+                            .or_insert_with(|| {
+                                crate::spellcheck::suggestions(
+                                    &menu.word,
+                                    menu.language,
+                                    personal,
+                                    5,
+                                )
+                            })
+                            .clone();
+                        for suggestion in suggestions {
+                            if ui.button(&suggestion).clicked() {
+                                apply = Some((a.byte_range.clone(), suggestion));
+                                ui.close_menu();
+                            }
+                        }
+                        if ui.button("Add to dictionary").clicked() {
+                            add_word = Some(menu.word.clone());
+                            ui.close_menu();
+                        }
+                    }
+                    AnnotationKind::Grammar => {
+                        if let Some(fix) = &a.fix {
+                            if ui.button(format!("Apply: {fix}")).clicked() {
+                                apply = Some((a.byte_range.clone(), fix.clone()));
+                                ui.close_menu();
+                            }
+                        }
+                    }
+                }
+                if ui.button("Dismiss").clicked() {
+                    dismiss = Some(a.clone());
+                    ui.close_menu();
+                }
+                ui.separator();
+            }
+            if let Some((a, b)) = selection {
+                let can_split = editor::split_around_selection(buffer, a, b).is_some();
+                if ui
+                    .add_enabled(can_split, egui::Button::new("Split Sheet"))
+                    .on_disabled_hover_text("The whole sheet is selected")
+                    .clicked()
+                {
+                    split = Some((a, b));
+                    ui.close_menu();
+                }
             }
         });
     }
@@ -4791,6 +5017,9 @@ fn sheet_editor(
         changed: output.response.changed() || edited_by_key,
         has_focus: output.response.has_focus(),
         split,
+        apply,
+        add_word,
+        dismiss,
     }
 }
 
@@ -4864,6 +5093,302 @@ impl ParrotApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finding_at_matches_the_word_under_the_caret() {
+        let annotations = annotations::check("a graet day.");
+        // "graet" spans bytes 2..7; the caret right after the word still counts as inside.
+        assert_eq!(
+            ParrotApp::finding_at(&annotations, 4).map(|a| a.kind),
+            Some(AnnotationKind::Spelling)
+        );
+        assert!(ParrotApp::finding_at(&annotations, 7).is_some());
+        assert!(ParrotApp::finding_at(&annotations, 8).is_none());
+        assert!(ParrotApp::finding_at(&[], 0).is_none());
+    }
+
+    #[test]
+    fn proofing_menu_click_applies_the_first_suggestion() {
+        let ctx = egui::Context::default();
+        setup(&ctx);
+        let app = ParrotApp::default();
+        let annotations =
+            annotations::check_in("graet", Language::default(), &app.state.personal_dictionary);
+        assert!(!annotations.is_empty(), "typo must be flagged");
+        let mut buffer = "graet".to_string();
+        let style = app.editor_style(&annotations, None);
+        let mut cache: HashMap<(Language, String), Vec<String>> = HashMap::new();
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let path: NodePath = vec![0];
+        let mut menu_finding = None;
+        let run_frame = |ctx: &egui::Context,
+                         raw: egui::RawInput,
+                         buffer: &mut String,
+                         cache: &mut HashMap<(Language, String), Vec<String>>,
+                         menu_finding: &mut Option<MenuFinding>,
+                         out: &mut Option<SheetEditorOutput>| {
+            let _ = ctx.run(raw, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    *out = Some(sheet_editor(
+                        ui,
+                        editor_id(&path),
+                        buffer,
+                        &style,
+                        600.0,
+                        None,
+                        false,
+                        ProofingMenu {
+                            annotations: &annotations,
+                            language: Language::default(),
+                            personal: &app.state.personal_dictionary,
+                            suggestion_cache: cache,
+                            open: menu_finding,
+                        },
+                    ));
+                });
+            });
+        };
+        let blank = || egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        let mut out = None;
+        run_frame(
+            &ctx,
+            blank(),
+            &mut buffer,
+            &mut cache,
+            &mut menu_finding,
+            &mut out,
+        );
+        // Probe for a secondary-click point on the word: the menu renders suggestions
+        // into the cache, so a non-empty cache proves open + render.
+        let mut opened_at = None;
+        'probe: for y in (20..140).step_by(10) {
+            for x in (300..500).step_by(25) {
+                let pos = egui::pos2(x as f32, y as f32);
+                let mut down = blank();
+                down.events.push(egui::Event::PointerMoved(pos));
+                down.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                });
+                run_frame(
+                    &ctx,
+                    down,
+                    &mut buffer,
+                    &mut cache,
+                    &mut menu_finding,
+                    &mut out,
+                );
+                let mut up = blank();
+                up.events.push(egui::Event::PointerMoved(pos));
+                up.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::default(),
+                });
+                run_frame(
+                    &ctx,
+                    up,
+                    &mut buffer,
+                    &mut cache,
+                    &mut menu_finding,
+                    &mut out,
+                );
+                run_frame(
+                    &ctx,
+                    blank(),
+                    &mut buffer,
+                    &mut cache,
+                    &mut menu_finding,
+                    &mut out,
+                );
+                if !cache.is_empty() {
+                    opened_at = Some(pos);
+                    break 'probe;
+                }
+            }
+        }
+        let p = opened_at.expect("menu should open somewhere on the word");
+        // Click below the popup origin where the first suggestion button should be.
+        // NOTE: the action must be read out of `out` *before* the next frame runs,
+        // because every frame overwrites it — same as the app's own call sites do.
+        for dy in (15..140).step_by(11) {
+            let pos = egui::pos2(p.x + 20.0, p.y + dy as f32);
+            let mut down = blank();
+            down.events.push(egui::Event::PointerMoved(pos));
+            down.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            });
+            run_frame(
+                &ctx,
+                down,
+                &mut buffer,
+                &mut cache,
+                &mut menu_finding,
+                &mut out,
+            );
+            let mut up = blank();
+            up.events.push(egui::Event::PointerMoved(pos));
+            up.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            });
+            run_frame(
+                &ctx,
+                up,
+                &mut buffer,
+                &mut cache,
+                &mut menu_finding,
+                &mut out,
+            );
+            if let Some((range, fix)) = out.take().and_then(|o| o.apply) {
+                buffer.replace_range(range, &fix);
+                break;
+            }
+            run_frame(
+                &ctx,
+                blank(),
+                &mut buffer,
+                &mut cache,
+                &mut menu_finding,
+                &mut out,
+            );
+            if buffer != "graet" {
+                break;
+            }
+        }
+        assert_ne!(
+            buffer, "graet",
+            "clicking the first suggestion must apply it"
+        );
+    }
+
+    #[test]
+    fn proofing_menu_latch_ignores_other_editors() {
+        // The sheet flow renders several editors per frame sharing one latch. A frame
+        // with no secondary click must not touch it — otherwise a second sheet would
+        // clobber the open menu's finding (or close it) every frame.
+        let ctx = egui::Context::default();
+        setup(&ctx);
+        let app = ParrotApp::default();
+        let annotations =
+            annotations::check_in("graet", Language::default(), &app.state.personal_dictionary);
+        let spelling = annotations
+            .iter()
+            .find(|a| a.kind == AnnotationKind::Spelling)
+            .expect("typo must be flagged")
+            .clone();
+        let clean: Vec<Annotation> = Vec::new();
+        let style1 = app.editor_style(&annotations, None);
+        let style2 = app.editor_style(&clean, None);
+        let mut buffer1 = "graet".to_string();
+        let mut buffer2 = "clean text here.".to_string();
+        let mut cache: HashMap<(Language, String), Vec<String>> = HashMap::new();
+        let mut latch = Some(MenuFinding {
+            annotation: spelling,
+            word: "graet".to_string(),
+            language: Language::default(),
+        });
+        let path1: NodePath = vec![0];
+        let path2: NodePath = vec![1];
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        let _ = ctx.run(raw, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                for (path, buffer, style, found) in [
+                    (&path1, &mut buffer1, &style1, annotations.as_slice()),
+                    (&path2, &mut buffer2, &style2, clean.as_slice()),
+                ] {
+                    let _ = sheet_editor(
+                        ui,
+                        editor_id(path),
+                        buffer,
+                        style,
+                        600.0,
+                        None,
+                        false,
+                        ProofingMenu {
+                            annotations: found,
+                            language: Language::default(),
+                            personal: &app.state.personal_dictionary,
+                            suggestion_cache: &mut cache,
+                            open: &mut latch,
+                        },
+                    );
+                }
+            });
+        });
+        assert_eq!(
+            latch.as_ref().map(|m| m.word.as_str()),
+            Some("graet"),
+            "rendering another editor must not clobber the latched finding"
+        );
+    }
+
+    #[test]
+    fn editor_finding_actions_update_the_open_sheet() {
+        let mut app = ParrotApp::default();
+        let dir = tempfile::tempdir().expect("tempdir");
+        app.library_path_input = dir.path().join("lib").display().to_string();
+        app.create_library();
+        app.state.create_project("P");
+        app.state.create_sheet(&[0], "S").expect("sheet");
+        let path = vec![0, 0];
+        app.state
+            .set_sheet_content(&path, editor::buffer_to_content("graet day."))
+            .expect("content");
+        app.open_sheet(path.clone());
+        app.editor_buffer = app.sheet_buffer(&path).expect("buffer");
+        let findings = annotations::check_in(
+            &app.editor_buffer,
+            app.language_of(&path),
+            &app.state.personal_dictionary,
+        );
+        let spelling = findings
+            .iter()
+            .find(|a| a.kind == AnnotationKind::Spelling)
+            .expect("typo must be flagged")
+            .clone();
+        // Dismiss hides the card until the text changes.
+        app.dismiss_finding(&path, &app.editor_buffer.clone(), &spelling);
+        assert_eq!(app.dismissed_findings.len(), 1);
+        assert!(app.proofing_selected.is_none());
+        // ...and the dismissal clears the editor's underlines too, not just the card.
+        let visible = app.visible_annotations(&path, &app.editor_buffer);
+        assert_eq!(visible.len(), findings.len() - 1);
+        assert!(!visible.contains(&spelling));
+        // A suggestion click replaces the word in the editor and the sheet.
+        app.apply_fix(&path, spelling.byte_range.clone(), "great");
+        assert!(
+            app.editor_buffer.starts_with("great"),
+            "fix applies in the editor: {}",
+            app.editor_buffer
+        );
+        // Add to dictionary persists and reports itself.
+        app.add_word_to_dictionary("Dionaea");
+        assert!(app.state.personal_dictionary.contains("dionaea"));
+        assert!(
+            app.status.contains("Dionaea"),
+            "status confirms: {}",
+            app.status
+        );
+        assert!(dir.path().join("lib").join("Dictionary.txt").is_file());
+    }
 
     /// Runs whole frames of the real UI headlessly — every panel, with a populated library —
     /// to catch panics (font families, slicing, borrow logic) no unit test would reach.

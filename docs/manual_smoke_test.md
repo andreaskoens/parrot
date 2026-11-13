@@ -88,6 +88,10 @@ confirm: layout, proportions, live feedback, real files on disk.
       Inspector's Spelling & Grammar tab (per sheet when several are shown), not below the text.
       Clicking a finding scrolls the editor to it and selects it; with checking off the tab offers
       the "Check Spelling and Grammar" toggle.
+- [ ] Right-clicking a finding in the editor offers its fixes (spelling suggestions, grammar
+      "Apply", "Add to dictionary" for spelling, "Dismiss"); picking one applies it in place.
+      Suggestions appear only for the clicked word, and "Add to dictionary" clears its
+      underlines everywhere.
 - [ ] ✎ Show Markdown on reveals the markers (dimmed); off hides them again.
 - [ ] Select a word and press B / I / Ctrl+B / Ctrl+I: it's wrapped in ** / *; pressing again unwraps.
 - [ ] 🔗 asks for an address and wraps the selection as `[text](url)`; ¶ switches the paragraph

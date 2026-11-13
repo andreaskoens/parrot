@@ -5,8 +5,11 @@
 use parrot_core::{
     ActivityTracker, Attachment, Filter, Goal, Group, Library, Node, Project, Sheet, SheetContent,
 };
+use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+use crate::personal_dictionary::{PersonalDictionary, FILE_NAME as DICTIONARY_FILE};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum StateError {
@@ -55,6 +58,10 @@ pub struct AppState {
     /// (no `chrono` dependency), see `parrot_core::statistics`'s own doc.
     pub activity: ActivityTracker,
     activity_day: u32,
+    /// Words the user added via the proofing UI, accepted by the spellchecker in every
+    /// language. Loaded from `Dictionary.txt` on open, written by
+    /// [`AppState::save_personal_dictionary`].
+    pub personal_dictionary: PersonalDictionary,
     /// Nodes moved to the Trash smart filter (T-12-03, ui-description §3.1), most recent last.
     /// Session-only: not written by `save` — see DECISIONS.md.
     pub trash: Vec<Node>,
@@ -153,6 +160,7 @@ impl AppState {
     pub fn create_library(&mut self, path: &Path) {
         self.library = Library::default();
         self.library_path = Some(path.to_path_buf());
+        self.personal_dictionary = PersonalDictionary::default();
         self.trash.clear();
     }
 
@@ -164,6 +172,10 @@ impl AppState {
     ) -> Result<bool, parrot_container::tree::TreeIoError> {
         self.library = parrot_container::tree::open_library(path)?;
         self.library_path = Some(path.to_path_buf());
+        // Personal words are auxiliary: a missing or unreadable file means an empty
+        // dictionary, never a failed open (libraries predate this feature).
+        self.personal_dictionary =
+            PersonalDictionary::load(&path.join(DICTIONARY_FILE)).unwrap_or_default();
         self.trash.clear();
         Ok(self.adopt_loose_nodes())
     }
@@ -241,6 +253,32 @@ impl AppState {
             .as_ref()
             .ok_or(StateError::NoLibraryPath)?;
         parrot_container::tree::save_library(path, &self.library)
+            .map_err(|e| StateError::Io(e.to_string()))
+    }
+
+    /// Adds `word` to the personal dictionary (case-insensitive). Returns whether it is
+    /// newly added; call [`AppState::save_personal_dictionary`] to persist it.
+    pub fn add_personal_word(&mut self, word: &str) -> bool {
+        self.personal_dictionary.add(word)
+    }
+
+    /// Persists the personal dictionary to `Dictionary.txt` in the library folder.
+    /// Writes nothing when empty — and removes a stale file — so wordless libraries stay
+    /// clean and old libraries never gain the file until a word is added.
+    pub fn save_personal_dictionary(&self) -> Result<(), StateError> {
+        let root = self
+            .library_path
+            .as_ref()
+            .ok_or(StateError::NoLibraryPath)?;
+        let path = root.join(DICTIONARY_FILE);
+        if self.personal_dictionary.is_empty() {
+            if path.exists() {
+                fs::remove_file(&path).map_err(|e| StateError::Io(e.to_string()))?;
+            }
+            return Ok(());
+        }
+        self.personal_dictionary
+            .save(&path)
             .map_err(|e| StateError::Io(e.to_string()))
     }
 
@@ -871,6 +909,45 @@ mod tests {
         // A project goes back to the root.
         state.move_to_trash(&p).expect("trash project");
         assert_eq!(state.restore_from_trash(0, None), Ok(vec![0]));
+    }
+
+    #[test]
+    fn personal_dictionary_round_trips_through_the_library_folder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = AppState::new();
+        state.create_library(dir.path());
+        assert!(state.add_personal_word("Affini"));
+        assert!(
+            !state.add_personal_word("AFFINI"),
+            "same word in other case is not new"
+        );
+        state.save_personal_dictionary().expect("save dictionary");
+        assert!(dir.path().join("Dictionary.txt").is_file());
+        state.save().expect("save library");
+        // A fresh open picks the words back up.
+        let mut reopened = AppState::new();
+        reopened.open_library(dir.path()).expect("reopen");
+        assert!(reopened.personal_dictionary.contains("affini"));
+        // Libraries written before this feature have no file: still an empty dictionary.
+        let bare = tempfile::tempdir().expect("tempdir");
+        let mut state = AppState::new();
+        state.create_library(bare.path());
+        state.save().expect("save library");
+        let mut reopened = AppState::new();
+        reopened.open_library(bare.path()).expect("reopen");
+        assert!(reopened.personal_dictionary.is_empty());
+        // And removing every word cleans the file back up.
+        let mut state = AppState::new();
+        state.create_library(dir.path());
+        state.open_library(dir.path()).expect("reopen");
+        state.personal_dictionary.remove("affini");
+        state.save_personal_dictionary().expect("save dictionary");
+        assert!(!dir.path().join("Dictionary.txt").exists());
+        // No library, nowhere to save.
+        assert_eq!(
+            AppState::new().save_personal_dictionary(),
+            Err(StateError::NoLibraryPath)
+        );
     }
 
     fn titles(state: &AppState, parent: &[usize]) -> Vec<String> {

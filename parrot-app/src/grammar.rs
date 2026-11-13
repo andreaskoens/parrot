@@ -198,7 +198,7 @@ fn check_typography(text: &str, language: Language, out: &mut Vec<GrammarIssue>)
 }
 
 /// Re-applies `word`'s capitalization (all caps / initial cap) to `suggestion`.
-fn match_case(word: &str, suggestion: &str) -> String {
+pub(crate) fn match_case(word: &str, suggestion: &str) -> String {
     let letters = || word.chars().filter(|c| c.is_alphabetic());
     if letters().count() > 1 && letters().all(char::is_uppercase) {
         return suggestion.to_uppercase();
