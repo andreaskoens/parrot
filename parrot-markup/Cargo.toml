@@ -1,0 +1,9 @@
+[package]
+name = "parrot-markup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+parrot-core = { path = "../parrot-core" }
+thiserror.workspace = true

@@ -1,0 +1,238 @@
+---
+source: parrot-syntax/src/lib.rs
+expression: spans
+---
+[
+    StyledSpan {
+        text: "function",
+        color: (
+            180,
+            142,
+            173,
+        ),
+    },
+    StyledSpan {
+        text: " ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "main",
+        color: (
+            143,
+            161,
+            179,
+        ),
+    },
+    StyledSpan {
+        text: "(",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: ")",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: " ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "{",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "  ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "const",
+        color: (
+            180,
+            142,
+            173,
+        ),
+    },
+    StyledSpan {
+        text: " ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "x",
+        color: (
+            191,
+            97,
+            106,
+        ),
+    },
+    StyledSpan {
+        text: " ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "=",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: " ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "42",
+        color: (
+            208,
+            135,
+            112,
+        ),
+    },
+    StyledSpan {
+        text: ";",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "  ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "console",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: ".",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "log",
+        color: (
+            150,
+            181,
+            180,
+        ),
+    },
+    StyledSpan {
+        text: "(",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "x",
+        color: (
+            191,
+            97,
+            106,
+        ),
+    },
+    StyledSpan {
+        text: ")",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: ";",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "}",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+]

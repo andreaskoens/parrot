@@ -1,0 +1,3 @@
+# Paths (relative to the scanned root) explicitly permitted to use std::net.
+# Empty by design: this project has no legitimate use for raw networking.
+# One path per line; '#' starts a comment.

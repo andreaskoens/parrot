@@ -1,0 +1,321 @@
+//
+// Default
+//
+// Export style to use with RTF export
+
+//
+// Document & Layout Settings
+//
+
+document-settings {
+	section-break:			heading-1
+	// always have H1 on a new page
+
+	two-sided:				no
+
+	footnote-enumeration:	per-section
+	footnote-placement:		end-of-page
+	footnote-style:			decimal
+}
+
+
+
+//
+// Default Typography
+//
+
+defaults {
+	font-size:				12pt
+	line-height:			120%
+	hyphenation:			yes
+}
+
+
+
+//
+// Basic Non-Text-Area Page Layout
+//
+
+area-footnotes {
+	font-size:				10pt
+	margin-right:			13mm
+	top-spacing:			10mm
+	anchor-inset:			15pt
+	// additional space cut off from text area
+}
+
+area-footnotes:anchor {
+	font-size:				9pt
+} 
+	
+
+
+
+@code {
+	font-family:			"Menlo"
+	font-weight:			normal;
+	font-slant:				normal;
+}
+
+//
+// Headers
+//
+
+heading-all {
+	keep-with-following:	true
+}
+
+heading-1 {
+	font-size:				32pt
+	font-weight:			bold
+
+	margin-top:				30pt
+	// Since H1 is section break, this adds to first page top margin
+
+	margin-bottom:			30pt
+}
+
+heading-2 {
+	font-size:				24pt
+	font-weight:			normal
+
+	margin-top:				48pt
+	margin-bottom:			12pt
+}
+
+heading-3 {
+	font-size:				20pt
+	font-weight:			normal
+
+	margin-top:				40pt
+	margin-bottom:			6pt
+}
+
+heading-4 {
+	font-size:				16pt
+	font-weight:			bold
+
+	margin-top:				30pt
+	margin-bottom:			6pt
+}
+
+heading-5 {
+	font-size:				12pt
+	font-weight:			bold
+
+	margin-top:				24pt
+	margin-bottom:			0pt
+}
+
+heading-6 {
+	font-size:				12pt
+
+	margin-top:				24pt
+	font-slant:				italic
+	margin-bottom:			0pt
+}
+
+
+
+//
+// Paragraph styles
+//
+
+paragraph {
+	margin-top: 12pt
+}
+
+paragraph-divider {
+	page-break:				after
+	// Set the divider to help with manual page breaks
+}
+
+paragraph-figure {
+	margin-top:				18pt
+	margin-bottom:			6pt
+
+	text-alignment:			center
+}
+
+figure-caption {
+	font-slant:				italic
+	margin-top:				5mm
+}
+
+
+
+//
+// Block styles
+//
+
+block-all {
+	margin-top:				18pt
+	margin-bottom:			6pt
+
+	margin-left:			3em
+}
+
+block-code : @code {
+	margin-top:				18pt
+	margin-bottom:			12pt
+}
+
+block-code paragraph {
+	default-tab-interval:	6em
+}
+
+block-quote {
+	font-slant:				italic
+	margin-left:			3em
+}
+
+block-raw {
+	visibility:				hidden
+	// kills raw source blocks
+}
+
+block-comment {
+	visibility:				hidden
+}
+
+//
+// Tables are currently entirely hidden, since RTF doesn't support tables
+//
+table {
+	visibility:			hidden
+}
+
+
+//
+// List styles
+//
+
+list-all {
+	margin-left:			2em
+	text-inset:				1em;
+	// Simulates tab stop justified right
+}
+
+list-all list-all {
+	margin-top:				0pt;
+	margin-bottom:			0pt;
+	margin-left:			1em;
+	// No extra spacings between nested ordered and unordered lists
+}
+
+list-ordered {
+	enumeration-format:		"%d."
+	margin-left:			1.9em;
+	text-inset:				1.9em;
+}
+
+list-ordered list-ordered {
+	enumeration-format:		"%*%d"
+	text-inset:				3.0em;
+}
+
+list-ordered list-ordered list-ordered {
+	enumeration-format:		"%*.%d"
+	text-inset:				4.5em;
+}
+
+list-unordered {
+	enumeration-format:		"-"
+}
+
+
+//
+// Table of contents
+//
+
+table-of-contents-item {
+	margin-top: 12pt
+}
+
+
+//
+// Inline styles
+//
+
+inline-strong {
+	font-weight:			bold
+}
+
+inline-emphasis {
+	font-slant:				italic;
+}
+
+inline-mark {
+	background-color:		#FEFECC
+}
+
+inline-citation {
+	font-slant:				italic;
+}
+
+inline-code : @code {
+	// Nothing else to set here, since it inherits from @code
+}
+
+$cool-blue = #468BDF
+
+inline-link {
+	font-color:				$cool-blue
+	underline:				single
+	underline-color:		$cool-blue
+
+	// Good thing we defined readable colors
+}
+
+inline-comment {
+	visibility:				hidden;
+	// kills comments
+}
+
+inline-delete {
+	visibility:				hidden;
+	// deletes deletions
+}
+
+inline-footnote {
+	font-size: 9pt
+}
+
+inline-annotation {
+	footnote-visibility:	hidden
+}
+
+inline-annotation:anchor {
+	background-color:		#ffffff
+}
+
+inline-raw {
+	visibility:				hidden;
+}
+
+
+
+//
+// Parrot specific stuff
+// By default, we are hiding tags (##) etc.
+//
+
+parrot-tag {
+	visibility:				hidden
+}
+
+inline-link parrot-tag {
+	visibility:				hidden
+}
+
+list-all parrot-tag {
+	visibility:				hidden
+}
+
+//
+// Syntax styles
+//
+
+syntax-all {
+	font-weight:			bold
+}

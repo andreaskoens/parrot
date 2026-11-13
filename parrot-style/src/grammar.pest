@@ -1,0 +1,84 @@
+// ULSS grammar (T-4-02). Covers, per the confirmed vocabulary extracted directly from the real
+// ULSS.tmLanguage grammar (decoded from /Applications/ParrotMac.app's SyntaxKit bundle, not
+// just the feature inventory's paraphrase): variables, hex/rgb() colors, numeric values with
+// units, the enumerated selector/pseudo-class vocabulary, descendant/adjacent-sibling/universal
+// combinators (left to selector-matching, T-4-05, to interpret — this grammar just captures the
+// token sequence), at-rule mixins (`@name { }`, `selector : @name { overrides }`, and a mixin
+// referencing another mixin), the full enumerated property set, `//` line comments.
+//
+// Block comments (`/* */`) are intentionally unimplemented — the real grammar itself scopes
+// them `invalid.comment.block.ulss` ("Currently not supported"), and none of the 10 real
+// fixtures (T-4-01) use them, so matching that limitation is matching the confirmed spec.
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
+
+stylesheet = { SOI ~ item* ~ EOI }
+
+item = _{ variable_definition | rule }
+
+variable_definition = { variable ~ "=" ~ value ~ ";"? }
+
+rule = { selector_path ~ mixin_application? ~ block }
+
+selector_path = { selector_token+ }
+
+selector_token = _{ mixin_ref | pseudo_class | universal_selector | combinator | plain_selector }
+
+// Adjacent-sibling combinator (confirmed real usage: `paragraph + paragraph`,
+// `heading-all + paragraph`). Descendant combination is just whitespace between two
+// `plain_selector`s — no token needed for it.
+combinator = @{ "+" }
+
+mixin_application = { ":" ~ mixin_ref }
+
+mixin_ref = @{ "@" ~ ident_chars }
+
+// The confirmed enumerated pseudo-class vocabulary (ULSS.tmLanguage's `selector` repository
+// entry) — kept as an explicit list, not a generic identifier, so a mixin-application colon
+// (`: @name`) is never mistaken for a pseudo-class colon.
+pseudo_class = @{ ":" ~ pseudo_name }
+pseudo_name = @{
+    "header-top-boundary" | "header-top" | "header-row-boundary" | "header-row"
+    | "header-right-boundary" | "header-right" | "header-left-boundary" | "header-left"
+    | "header-column-boundary" | "header-column" | "header-bottom-boundary" | "header-bottom"
+    | "header" | "first-page" | "first" | "right-page" | "left-page" | "last"
+    | "enumerator" | "body" | "anchor"
+    | "heading-1" | "heading-2" | "heading-3" | "heading-4" | "heading-5" | "heading-6"
+}
+
+universal_selector = @{ "*" }
+
+plain_selector = @{ ident_chars }
+
+block = { "{" ~ declaration* ~ "}" }
+
+declaration = { property ~ ":" ~ value ~ ";"? }
+
+property = @{ ident_chars }
+
+value = { value_item ~ ("," ~ value_item)* }
+
+value_item = _{ bracket_list | rgb_color | hex_color | number | string | variable | keyword }
+
+bracket_list = { "[" ~ value_item ~ ("," ~ value_item)* ~ "]" }
+
+rgb_color = { ^"rgb" ~ "(" ~ number ~ "," ~ number ~ "," ~ number ~ ("," ~ number)? ~ ")" }
+
+hex_color = @{ "#" ~ ASCII_HEX_DIGIT{6} }
+
+number = @{ ("-" | "+")? ~ (ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? | "." ~ ASCII_DIGIT+) ~ unit? }
+
+unit = @{ "pt" | "mm" | "in" | "ex" | "en" | "em" | "cm" | "%" }
+
+string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+variable = @{ "$" ~ ident_chars }
+
+// Fallback for bare-word values (`bold`, `none`, `page-number`, ...) — the confirmed grammar
+// enumerates these exhaustively (`style-values`), but kept generic here since semantic
+// validation of *which* keyword is legal where is the cascade/resolution engine's job (T-4-06),
+// not the parser's.
+keyword = @{ ident_chars }
+
+ident_chars = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }

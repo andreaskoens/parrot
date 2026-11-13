@@ -1,0 +1,98 @@
+//
+// Reading Mode
+//
+// A dark style suited for reading.
+//
+
+$ul-readingmode-link-color 		= #d1a804;
+$ul-readingmode-text-color 		= #f5f5f5;
+$ul-readingmode-gray-color 		= #a0a0a0;
+$ul-readingmode-background-color 	= none;
+
+@ul-readingmode-default {
+	font-color: $ul-readingmode-text-color;
+	background-color: $ul-readingmode-background-color;
+	underline-color: $ul-readingmode-text-color;
+	strikethrough-color: $ul-readingmode-text-color;
+}
+
+// Apply default style
+defaults: @ul-readingmode-default {}
+heading-all: @ul-readingmode-default {}
+list-all: @ul-readingmode-default {}
+inline-annotation: @ul-readingmode-default {}
+inline-citation: @ul-readingmode-default {}
+inline-raw: @ul-readingmode-default {}
+block-quote: @ul-readingmode-default {}
+paragraph: @ul-readingmode-default {}
+area-header: @ul-readingmode-default {}
+area-footer: @ul-readingmode-default {}
+area-footnotes: @ul-readingmode-default {}
+
+// Table styles
+table {
+	border-top-color: $ul-readingmode-text-color
+	border-left-color: $ul-readingmode-text-color
+	border-right-color: $ul-readingmode-text-color
+	border-bottom-color: $ul-readingmode-text-color			
+}
+
+table-cell {
+	cell-color: $ul-readingmode-background-color
+	alternate-row-color: $ul-readingmode-background-color
+	alternate-column-color: $ul-readingmode-background-color
+
+	row-separator-color: $ul-readingmode-text-color
+	column-separator-color: $ul-readingmode-text-color
+}
+
+// Inline Styles
+inline-strong: @ul-readingmode-default {
+	font-weight: bold;
+}
+
+inline-emphasis: @ul-readingmode-default {
+	font-slant:	italic;
+}
+
+inline-mark: @ul-readingmode-default {
+	background-color: #d1a804;
+	font-color: #000000;
+}
+
+inline-comment: @ul-readingmode-default {
+	font-color: $ul-readingmode-gray-color;
+}
+
+inline-delete: @ul-readingmode-default {
+	font-color: $ul-readingmode-gray-color;
+	strikethrough: single;
+	strikethrough-color: $ul-readingmode-gray-color;
+}
+
+inline-link: @ul-readingmode-default {
+	font-color:	$ul-readingmode-link-color;
+	underline-color: $ul-readingmode-link-color;
+}
+
+
+// Code
+@ul-readingmode-code: @ul-readingmode-default {}
+block-code : @ul-readingmode-code {}
+inline-code : @ul-readingmode-code {}
+
+syntax-all { font-color: $ul-readingmode-text-color; }
+syntax-entity { font-color: #fd971f; }
+syntax-tag { font-color: #f92672; }
+syntax-keyword { font-color: #f92672; }
+syntax-parameter { font-color: #ffffff; }
+syntax-string { font-color: #e6db74; }
+syntax-constant { font-color: #6effff; }
+syntax-variable { font-color: #a6e22e; }
+syntax-escape { font-color: #ae81ff; }
+syntax-comment { font-color: #858585; }
+
+syntax-error {
+	font-color: #f8f8f0
+	background-color: #f92672
+}

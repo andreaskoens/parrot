@@ -1,0 +1,496 @@
+//
+// Swiss Knife
+//
+// Export style to show clean layout 
+// without markup
+//
+// Visit http://www.parrot.app/styles
+// for full reference
+//
+
+
+//
+// Document & Layout Settings
+//
+
+document-settings {
+	page-inset-top:		25mm;	page-inset-inner:	25mm
+	page-inset-bottom:	30mm;	page-inset-outer:	25mm
+
+	section-break:			heading-1
+	// always have H1 on a new page
+
+	two-sided:				no
+	page-binding:			left
+
+	footnote-enumeration:	per-section
+	footnote-placement:		end-of-page
+	footnote-style:			decimal
+}
+
+
+
+//
+// Default Typography
+//
+
+defaults {
+	font-family:			"Avenir Next"
+	font-size:				12pt
+	line-height:			24pt
+
+	text-alignment:			justified
+	hyphenation:			yes
+}
+
+
+
+//
+// Basic Non-Text-Area Page Layout
+//
+
+area-header {
+	content:				none
+	top-spacing:			0mm
+	bottom-spacing:			0mm
+}
+
+area-footnotes {
+	font-size:				9pt
+	line-height:			12pt
+	margin-right:			13mm
+	top-spacing:			10mm
+	// additional space cut off from text area
+}
+
+area-footer {
+	content:				page-number
+	text-alignment:			right
+	top-spacing:			5mm
+	bottom-spacing:			20mm
+}
+
+
+
+//
+// Reusable styles (variables & mixins)
+//
+
+$mark-color =				#FEFDD5
+$black =					#000000
+$light-grey =				#D6D6D6
+$cool-blue = 				#468BDF
+
+// Readable colors FTW!
+
+@code {
+	font-family:			"Courier New"
+	font-weight:			normal
+	font-slant:				normal
+	// Reset all traits to normal, since this can appear anywhere
+}
+
+
+
+//
+// Headers
+//
+
+heading-all {
+	line-height:			2em
+
+	keep-with-following:	true
+	text-alignment:			left
+}
+
+heading-1 {
+	font-size:				32pt
+	font-weight:			bold
+
+	margin-top:				30pt
+	// Since H1 is section break, this adds to first page top margin
+
+	margin-bottom:			30pt
+}
+
+heading-2 {
+	font-size:				24pt
+	font-weight:			bold
+
+	margin-top:				48pt
+	margin-bottom:			12pt
+}
+
+heading-3 {
+	font-size:				18pt
+	font-weight:			bold
+
+	margin-top:				36pt
+	margin-bottom:			12pt
+}
+
+heading-4 {
+	font-size:				15pt
+	font-weight:			bold
+
+	margin-top:				30pt
+	margin-bottom:			8pt
+}
+
+heading-5 {
+	font-size:				12pt
+	font-weight:			bold
+
+	margin-top:				24pt
+	margin-bottom:			8pt
+}
+
+heading-6 {
+	font-size:				12pt
+
+	margin-top:				24pt
+	font-slant:				italic
+	margin-bottom:			8pt
+}
+
+
+
+//
+// Paragraph styles
+//
+
+paragraph-divider {
+	page-break:				after
+	// Set the divider to help with manual page breaks
+}
+
+paragraph-figure {
+	margin-top:				20pt
+	margin-bottom:			10pt
+
+	text-alignment:			center
+}
+
+figure-caption {
+	font-slant:				italic
+}
+
+paragraph + paragraph {
+	first-line-indent:		3em
+	// Indent the first line of a paragraph,
+	// except for the first paragraph
+}
+
+
+
+//
+// Tables styles
+//
+
+table {
+	border-top-style:		solid
+	border-top-width:		1.5pt
+	border-bottom-style:	solid
+	border-bottom-width:	1.5pt
+}
+
+table-cell {
+	padding-bottom:			8pt
+	padding-top:			8pt
+
+	line-height:			16pt
+}
+
+table-cell :header {
+	font-weight:			bold
+}
+
+table-cell :header-row {
+	row-separator-style: 	solid
+	row-separator-color:	#929292
+}
+
+table-cell :header-row-boundary {
+	row-separator-style: 	solid
+	row-separator-color:	#929292
+}
+
+
+
+//
+// Block styles
+//
+
+block-all {
+	margin-top:				12pt
+	margin-bottom:			12pt
+
+	margin-left:			3em
+	margin-right:			3em
+}
+
+block-code : @code {
+	font-size:				11pt
+	line-height:			16pt
+	font-color:				$black
+	margin-left:			0em
+	margin-top:				13pt
+	margin-bottom:			13pt
+
+	// No need to set the font, since @code calls Courier New
+}
+
+block-code paragraph {
+	margin-top:				0pt
+	margin-bottom:			0pt
+	text-alignment:			left
+	first-line-indent:		0pt
+
+	hyphenation:			no
+
+	default-tab-interval:	4em
+	// Set tab stops
+}
+
+block-quote {
+	font-slant:				italic
+
+	margin-left:			3em
+}
+
+block-raw {
+	visibility:				hidden
+	// kills raw source blocks
+}
+
+block-comment {
+	visibility:				hidden
+}
+
+
+
+//
+// List styles
+//
+
+list-all {
+	margin-left:			3em
+	margin-top:				12pt
+}
+
+list-all list-all {
+	margin-top:				0pt
+	margin-bottom:			0pt
+	// No extra spacings between nested ordered and unordered lists
+}
+
+list-ordered {
+	enumeration-format:		"%d."
+	text-inset:				2.5em
+	// Simulates tab stop justified right
+}
+
+list-ordered list-ordered {
+	enumeration-format:		"%*%d"
+	text-inset:				4em
+	// Simulates tab stop justified right
+}
+
+list-ordered list-ordered list-ordered {
+	enumeration-format:		"%*.%d"
+	text-inset:				5.5em
+	// Simulates tab stop justified right
+}
+
+list-unordered {
+	enumeration-format:		"-"
+	text-inset:				2em
+	// Simulates tab stop justified right
+}
+
+
+
+//
+// Table of contents styles
+//
+
+table-of-contents-item :heading-1 {
+	font-style:		"Demi Bold"
+	font-size:		14pt
+	line-height:	30pt
+}
+
+table-of-contents-item :heading-2 {
+	font-style: "Medium"
+}
+
+
+
+//
+// Inline styles
+//
+
+inline-strong {
+	font-weight:			bold
+}
+
+inline-emphasis {
+	font-slant:				italic
+}
+
+inline-mark {
+	background-color:		$mark-color
+}
+
+inline-citation {
+	font-slant:				italic
+}
+
+inline-code : @code {
+	// Nothing else to set here, since it inherits from @code
+}
+
+inline-link {
+	font-color:				$cool-blue
+	underline:				single
+	underline-color:		$cool-blue
+
+	// Good thing we defined readable colors
+}
+
+inline-comment {
+	visibility:				hidden
+	// kills comments
+}
+
+inline-delete {
+	visibility:				hidden
+	// deletes deletions
+}
+
+inline-annotation {
+	footnote-visibility:	hidden
+}
+
+inline-annotation:anchor {
+	background-color:		#ffffff
+}
+
+inline-raw {
+	visibility:				hidden
+	// kills raw source
+}
+
+
+
+//
+// Parrot specific stuff
+// By default, we are hiding tags (##) etc.
+//
+
+parrot-tag {
+	visibility:				hidden
+}
+
+inline-link parrot-tag {
+	visibility:				hidden
+}
+
+list-all parrot-tag {
+	visibility:				hidden
+}
+
+
+
+//
+// Syntax styles
+//
+
+syntax-all {
+}
+
+syntax-entity {
+	font-color:				#6f42c1
+}
+
+syntax-tag {
+	font-color:				#22863a
+}
+
+syntax-keyword {
+	font-color:				#d73a49
+}
+
+syntax-parameter {
+	font-color:				#24292e
+}
+
+syntax-string {
+	font-color:				#003878
+}
+
+syntax-constant {
+	font-color:				#005cc5
+}
+
+syntax-variable {
+	font-color:				#e36209
+}
+
+syntax-escape {
+	font-weight:			bold
+	font-color:				#22863a
+}
+
+syntax-comment {
+	font-color:				#6a737d
+}
+
+syntax-error {
+	font-color:				#b31d28
+}
+
+
+
+//
+// Markup styles
+//
+
+syntax-heading {
+	font-weight:			bold
+	font-color:				#005cc5
+}
+
+syntax-italic {
+	font-slant:				italic
+	font-color:				#24292e
+}
+
+syntax-bold {
+	font-weight:			bold
+	font-color:				#24292e
+}
+
+syntax-deleted {
+	font-color:				#b31d28
+	background-color:		#ffeef0
+}
+
+syntax-inserted {
+	font-color:				#22863a
+	background-color:		#f0fff4
+}
+
+syntax-changed {
+	font-color:				#e36209
+	background-color:		#ffebda
+}
+
+syntax-link {
+	underline:				single
+	font-color:				#032f62
+}
+
+syntax-list {
+	font-color:				#e36209
+}

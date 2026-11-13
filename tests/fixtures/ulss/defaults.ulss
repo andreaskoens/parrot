@@ -1,0 +1,147 @@
+// Defaults for non-inheritable settings
+* {
+	margin-top:			0pt
+	margin-left:		0pt
+	margin-right:		0pt
+	margin-bottom:		0pt
+
+	collapse-margin-top:	yes
+	collapse-margin-bottom:	yes
+
+	collapse-margin-left:	no
+	collapse-margin-right:	no
+}
+
+// Default paragraph styles
+defaults {
+	text-alignment:			auto
+	line-height:			auto
+	page-break:				none
+}
+
+// Figures are always ignoring line height settings
+paragraph-figure {
+	line-height:		auto
+}
+
+// Default caption styling
+figure-caption paragraph {
+    margin-top:			0pt
+    margin-bottom:		0pt
+    margin-left:		0pt
+    margin-right:		0pt
+
+	// Always try to keep paragraphs of a caption together.
+	keep-with-following:	yes
+}
+
+// Image Figures with captions are kept together with their captions.
+internal-captioned-figure-body {
+	keep-with-following:	yes
+}
+
+// Default table styling
+table {
+	margin-top:		1em
+	margin-bottom:	1em
+	padding-collapse:	yes
+	
+	border-color:		#000000
+
+	// Set default cell settings on table level, so it will be overridden if user sets it on table-cell.
+	padding:			3pt
+
+	separator-style:	none
+	separator-width:	1pt
+	separator-color:	#000000
+	
+	caption-placement:	before
+}
+
+table-cell {
+	// Force text-alignment to auto, so the column alignment is normally used
+	text-alignment:		auto
+
+	// Force-reset certain settings on paragraphs inside tables.
+	first-line-indent:	0pt
+	line-height:		auto
+}
+
+table-cell paragraph {
+	first-line-indent:	0pt
+	margin-top:			0pt
+	margin-bottom:		0pt
+	margin-left:		0pt
+	margin-right:		0pt
+}
+
+table-cell paragraph + paragraph {
+	first-line-indent:	0pt
+}
+
+table-cell :header {
+	font-weight:	bold
+}
+
+// Table captions are kept together with their tables and have a collapsing margin with the table
+table figure-caption {
+	keep-with-following:	yes
+	margin-top:				1em
+	margin-bottom:			1em
+}
+
+table-of-contents {
+	page-number-position: 	trailing-column
+	trailing-column-fill: 	dots
+	nesting-indentation:	2em
+}
+
+// Default area header/footer settings
+area-header {
+	vertical-alignment:	top
+}
+
+area-footer {
+	vertical-alignment:	bottom
+}
+
+
+// Default footnote area styling
+area-footnotes {
+	anchor-alignment: 	right
+	anchor-inset: 		10pt
+	text-inset: 		30pt
+
+	divider-position: 	left
+	divider-width: 		1pt
+	divider-length: 	100pt 
+
+	top-spacing: 		10pt
+	divider-spacing: 	10pt
+}
+
+// Default style for anchors inside a footnote area
+area-footnotes :anchor {
+	footnote-visibility: visible
+	baseline-shift: superscript
+}
+
+// Default footnote anchor style
+@inline-footnote-style {
+	baseline-shift: superscript
+}
+
+inline-footnote :anchor : @inline-footnote-style {}
+inline-annotation :anchor : @inline-footnote-style {}
+
+
+// Hide any technical style elements
+@hidden-technical-style {
+	visibility: hidden
+}
+
+parrot-tag : @hidden-technical-style { 
+	visibility: hidden; 
+}
+parrot-whitespace : @hidden-technical-style { }
+parrot-escape-character : @hidden-technical-style { }

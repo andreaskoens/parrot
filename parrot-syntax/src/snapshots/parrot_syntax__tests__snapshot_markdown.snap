@@ -1,0 +1,118 @@
+---
+source: parrot-syntax/src/lib.rs
+expression: spans
+---
+[
+    StyledSpan {
+        text: "#",
+        color: (
+            143,
+            161,
+            179,
+        ),
+    },
+    StyledSpan {
+        text: " ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "Heading",
+        color: (
+            143,
+            161,
+            179,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "Some ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "**",
+        color: (
+            235,
+            203,
+            139,
+        ),
+    },
+    StyledSpan {
+        text: "bold",
+        color: (
+            235,
+            203,
+            139,
+        ),
+    },
+    StyledSpan {
+        text: "**",
+        color: (
+            235,
+            203,
+            139,
+        ),
+    },
+    StyledSpan {
+        text: " and ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "*",
+        color: (
+            180,
+            142,
+            173,
+        ),
+    },
+    StyledSpan {
+        text: "italic",
+        color: (
+            180,
+            142,
+            173,
+        ),
+    },
+    StyledSpan {
+        text: "*",
+        color: (
+            180,
+            142,
+            173,
+        ),
+    },
+    StyledSpan {
+        text: " text.\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+]

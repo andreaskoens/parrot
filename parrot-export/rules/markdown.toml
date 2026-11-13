@@ -1,0 +1,22 @@
+# Markdown export conversion rules (T-5-01), dispatched by parrot-export::conversion.
+#
+# This project's own rule-table shape (T-5-02's README documents the schema). The `code` entries
+# below encode the exact confirmed rule from the real `Markdown/Conversion/Default.plist`: if the
+# code span's own content contains a backtick, wrap the whole span in double backticks instead of
+# single. The real plist expresses this as ONE template with an in-template if/end conditional
+# (see parrot-export/src/dsl.rs's own test for that literal form); here it's expressed as TWO
+# whole-template rules selected by rule-table dispatch instead — both produce byte-identical
+# output for the same input, and splitting it this way is simpler given this project's own
+# first-match-wins table design.
+#
+# `template` uses TOML literal (single-quoted) strings deliberately: a basic (double-quoted)
+# TOML string would itself interpret ` `/`\n` before the DSL ever sees the text, double-
+# escaping it. A literal string passes the backslash sequences through unchanged for the DSL's
+# own tokenizer (src/dsl.rs) to interpret.
+[[code]]
+precondition = "content.plainText.containsString(\"`\")"
+template = '``{{ content.plainText.replace(" ", "  \n").unencodedContents.anchoredReplace(" ", " ") }}``'
+
+[[code]]
+precondition = "true"
+template = '`{{ content.plainText.replace(" ", "  \n").unencodedContents.anchoredReplace(" ", " ") }}`'

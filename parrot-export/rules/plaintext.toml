@@ -1,0 +1,9 @@
+# Plain-text export conversion rules (T-5-01), dispatched by parrot-export::conversion.
+#
+# PlainText export has no confirmed divergent behavior from simple content extraction (the real
+# Default.plist's `elementStyles` rules are specifically for the Markdown target) — the `code`
+# rule here is a trivial identity transform, included so PlainText's export demonstrably goes
+# through the same rule-table+DSL engine as Markdown, not because it changes any output.
+[[code]]
+precondition = "true"
+template = "{{ content.plainText }}"

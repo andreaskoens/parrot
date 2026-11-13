@@ -1,0 +1,190 @@
+---
+source: parrot-syntax/src/lib.rs
+expression: spans
+---
+[
+    StyledSpan {
+        text: "{",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "  ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\"",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "key",
+        color: (
+            163,
+            190,
+            140,
+        ),
+    },
+    StyledSpan {
+        text: "\"",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: ":",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: " ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\"",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "value",
+        color: (
+            163,
+            190,
+            140,
+        ),
+    },
+    StyledSpan {
+        text: "\"",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: ",",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "  ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\"",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "num",
+        color: (
+            163,
+            190,
+            140,
+        ),
+    },
+    StyledSpan {
+        text: "\"",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: ":",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: " ",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "42",
+        color: (
+            208,
+            135,
+            112,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "}",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+    StyledSpan {
+        text: "\n",
+        color: (
+            192,
+            197,
+            206,
+        ),
+    },
+]

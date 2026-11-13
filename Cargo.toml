@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "parrot-core",
+    "parrot-container",
+    "parrot-markup",
+    "parrot-style",
+    "parrot-export",
+    "parrot-import",
+    "parrot-syntax",
+    "parrot-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+thiserror = "1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+quick-xml = "0.31"
+tempfile = "3"
+insta = "1"

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export3.dtd">
+<en-export export-date="20261030T000000Z" application="Evernote" version="10.0">
+<note>
+<title>Meeting Notes</title>
+<content><![CDATA[<?xml version="1.0" encoding="UTF-8" standalone="no"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><div>Body with <b>bold</b> and <i>italic</i> and a <a href="https://example.com">link</a>.</div><ul><li>first item</li><li>second item</li></ul></en-note>]]></content>
+<created>20261030T000000Z</created>
+<updated>20261030T000000Z</updated>
+</note>
+</en-export>

@@ -1,0 +1,1 @@
+<sheet version="1"><markup version="1" identifier="markdownxl" displayName="Markdown XL"/><string xml:space="preserve"><p>An image: <element kind="image"><attribute identifier="URL">photo.png</attribute><attribute identifier="text">a photo</attribute></element> and a video: <element kind="video"><attribute identifier="URL">clip.mp4</attribute></element></p></string></sheet>

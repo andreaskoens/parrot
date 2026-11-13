@@ -1,0 +1,29 @@
+[package]
+name = "parrot-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+toml = "0.8"
+parrot-core = { path = "../parrot-core" }
+parrot-container = { path = "../parrot-container" }
+parrot-markup = { path = "../parrot-markup" }
+parrot-syntax = { path = "../parrot-syntax" }
+parrot-style = { path = "../parrot-style" }
+parrot-export = { path = "../parrot-export" }
+parrot-import = { path = "../parrot-import" }
+# Native dialogs. Default features pull in async-std (banned by no_network_guard); gtk3 is the
+# non-portal Linux backend, and Windows/macOS use their own system dialogs either way.
+rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
+egui = "0.29"
+egui-phosphor = "0.7"
+eframe = "0.29"
+cosmic-text = "0.12"
+
+[dev-dependencies]
+tempfile.workspace = true
+printpdf = "0.8"

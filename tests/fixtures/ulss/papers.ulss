@@ -1,0 +1,501 @@
+//
+// Papers
+//
+// Export style aimed at (academic) 
+// manuscript publishing
+//
+// Visit http://www.parrot.app/styles
+// for full reference
+//
+
+
+//
+// Document & Layout Settings
+//
+
+document-settings {
+	page-inset-top:		1in;	page-inset-inner:	1in
+	page-inset-bottom:	1in;	page-inset-outer:	1in
+
+	two-sided:				no
+	page-binding:			left
+
+	footnote-enumeration:	per-section
+	footnote-placement:		end-of-page
+	footnote-style:			decimal
+}
+
+
+
+//
+// Commonly used values
+//
+
+$mark-color =				#FEFECC
+$black =					#000000
+$light-grey =				#cccccc
+$cool-blue = 				#3875d7
+
+$indent =					0.5in
+$font-size =				12pt
+$line-height =				24.5pt
+
+
+
+//
+// Default Typography
+//
+
+defaults {
+	font-family:			"Times New Roman"
+	font-size:				$font-size
+	line-height:			$line-height
+
+	text-alignment:			left
+	hyphenation:			no
+}
+
+
+
+//
+// Basic Non-Text-Area Page Layout
+//
+
+area-header {
+	content:				page-number
+	text-alignment:			right
+	top-spacing:			0.35in
+}
+
+area-footnotes {
+	divider-length:			5cm
+	divider-spacing:		0pt
+	divider-width:			0.7pt
+	anchor-alignment:		left
+	anchor-inset:			2em
+	margin-left:			-2em
+}
+
+inline-footnote paragraph {
+	margin-top:				12pt
+	line-height:			18pt
+}
+
+
+
+//
+// Reusable styles
+//
+
+@code {
+	font-family:			"Courier New"
+	font-size:				10pt
+	// Reset all traits to normal, since code blocks can appear anywhere
+	font-weight:			normal
+	font-slant:				normal
+}
+
+
+
+//
+// Headers
+//
+
+heading-all {
+	keep-with-following:	true
+	text-alignment:			left
+}
+
+heading-1 {
+	style-title:			"Heading 1"
+	text-alignment:			center
+	font-weight:			bold
+}
+
+heading-2 {
+	style-title:			"Heading 2"
+	text-alignment:			center
+	font-weight:			normal
+}
+
+heading-3 {
+	style-title:			"Heading 3"
+	font-weight:			bold
+	text-alignment:			left
+}
+
+heading-4 {
+	style-title:			"Heading 4"
+	font-weight:			bold
+	first-line-indent:		0.5in
+}
+
+heading-5 {
+	style-title:			"Heading 5"
+	first-line-indent:		0.5in
+	font-slant:				italic
+	font-weight:			bold
+}
+
+heading-6 {
+	style-title:			"Heading 6"
+	font-weight:			normal
+	text-alignment:			left
+	first-line-indent:		0.5in
+	font-slant:				italic
+}
+
+
+
+//
+// Paragraph styles
+//
+
+paragraph {
+	style-title:			"Paragraph"
+	first-line-indent:		$indent
+}
+
+paragraph-divider {
+	page-break:				none
+	visibility:				hidden
+}
+
+paragraph-figure {
+	margin-top:				$line-height
+	text-alignment:			center
+	margin-top:				10mm
+	margin-bottom:			5mm
+}
+
+figure-caption {
+	font-size:				10pt
+	text-alignment:			center
+	line-height:			18pt
+}
+
+
+
+//
+// Tables styles
+//
+
+table {
+	border-top-style:		solid
+	border-top-width:		1.5pt
+	border-bottom-style:	solid
+	border-bottom-width:	1.5pt
+}
+
+table-cell {
+	padding-bottom:			6pt
+
+	line-height:			16pt
+}
+
+table-cell :header {
+	font-weight:			bold
+}
+
+table-cell :header-row-boundary {
+	row-separator-style: 	solid
+	row-separator-color:	#929292
+}
+
+
+
+//
+// Block styles
+//
+
+block-all {
+	margin-left:			$indent
+}
+
+block-code : @code {
+	style-title:			"Codeblock"
+	font-family:			"Courier New"
+	font-size:				10pt
+	font-color:				#000000
+	line-height:			$line-height
+	margin-left:			0mm
+	margin-top:				18pt
+	margin-bottom:			18pt
+}
+
+block-code paragraph{
+	margin-top:				0pt
+	margin-bottom:			0pt
+	text-alignment:			left
+	first-line-indent:		0pt
+	hyphenation:			no
+	default-tab-interval:	4em
+}
+
+block-quote {
+	style-title:			"Blockquote"
+	margin-left:			$indent
+	font-slant:				italic
+	margin-top:				5mm
+	margin-bottom:			5mm
+}
+
+block-quote paragraph {
+	first-line-indent:		0pt
+
+}
+
+block-quote paragraph + paragraph {
+	first-line-indent:		$indent
+}
+
+block-raw {
+	// kills raw source blocks
+	visibility:				hidden
+}
+
+block-comment {
+	visibility:				hidden
+}
+
+
+
+//
+// List styles
+//
+
+list-all {
+	margin-left:			$indent
+}
+
+list-all list-all {
+	// No extra spacings between nested ordered and unordered lists
+	margin-top:				0pt
+	margin-bottom:			0pt
+}
+
+list-ordered {
+	// Simulates tab stop justified right
+	enumeration-format:		"%d."
+	text-inset:				1.5em
+}
+
+list-ordered list-ordered {
+	// Simulates tab stop justified right
+	enumeration-format:		"%*%d"
+	text-inset:				2em
+	margin-left:			1.5em
+}
+
+list-ordered list-ordered list-ordered {
+	// Simulates tab stop justified right
+	enumeration-format:		"%*.%d"
+	text-inset:				2.75em
+	margin-left:			2em
+}
+
+list-unordered {
+	enumeration-format:		"•"
+	text-inset:				1.3em
+}
+
+list-unordered list-unordered {
+	enumeration-format:		"•"
+	text-inset:				1em
+}
+
+list-unordered list-unordered list-unordered {
+	enumeration-format:		"•"
+	text-inset:				1.3em
+}
+
+
+
+//
+// Table of contents styles
+//
+
+table-of-contents {
+	nesting-indentation: 1em
+}
+
+table-of-contents-item :heading-1 {
+	font-weight: bold
+	line-height: 28pt
+}
+
+
+
+//
+// Inline styles
+//
+
+inline-strong {
+	style-title:			"Strong"
+	font-weight:			bold
+}
+
+inline-emphasis {
+	style-title:			"Emphasis"
+	font-slant:				italic
+}
+
+inline-mark {
+	style-title:			"Mark"
+	background-color:		$mark-color
+}
+
+inline-citation {
+	style-title:			"Inline Cite"
+	font-slant:				italic
+}
+
+inline-code : @code {
+	style-title:			"Inline Code"
+}
+
+inline-link {
+	style-title:			"Link"
+	font-color:				$cool-blue
+	underline:				single
+	underline-color:		$cool-blue
+}
+
+inline-comment {
+	visibility:				hidden
+}
+
+inline-delete {
+	// deletes deletions
+	visibility:				hidden
+}
+
+inline-annotation {
+	footnote-visibility:	hidden
+}
+
+inline-annotation:anchor {
+	background-color:		#ffffff
+}
+
+inline-annotation paragraph {
+	margin-top:				12pt
+	line-height:			18pt
+}
+
+inline-raw {
+	// kills raw source
+	visibility:				hidden
+}
+
+
+
+//
+// Parrot specific stuff
+// By default, we are hiding tags (##) etc.
+//
+
+parrot-tag {
+	visibility:				hidden
+}
+
+
+//
+// Syntax styles
+//
+
+syntax-all {
+}
+
+syntax-entity {
+	font-color:				#555555
+}
+
+syntax-tag {
+	font-color:				#555555
+	font-weight:			bold
+}
+
+syntax-keyword {
+	font-color:				#000000
+	font-weight:			bold
+}
+
+syntax-parameter {
+	font-color:				#777777
+	font-weight:			bold
+}
+
+syntax-string {
+	font-color:				#333333
+}
+
+syntax-constant {
+	font-color:				#333333
+}
+
+syntax-variable {
+	font-color:				#333333
+}
+
+syntax-escape {
+	font-weight:			bold
+	font-color:				#333333
+}
+
+syntax-comment {
+	font-color:				#999999
+}
+
+syntax-error {
+	font-color:				#999999
+	font-weight:			bold
+}
+
+
+
+//
+// Markup styles
+//
+
+syntax-heading {
+	font-weight:			bold
+	font-color:				#000000
+	font-slant:				italic
+}
+
+syntax-italic {
+	font-slant:				italic
+	font-slant:				italic
+}
+
+syntax-bold {
+	font-weight:			bold
+	font-slant:				italic
+}
+
+syntax-deleted {
+	font-color:				#999999
+	font-slant:				italic
+}
+
+syntax-inserted {
+	font-color:				#000000
+	font-weight:			bold
+	font-slant:				italic
+}
+
+syntax-changed {
+	font-color:				#555555
+	font-slant:				italic
+}
+
+syntax-link {
+	underline:				single
+	font-color:				#000000
+	font-slant:				italic
+}
+
+syntax-list {
+	font-color:				#000000
+}

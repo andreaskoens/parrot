@@ -1,0 +1,44 @@
+//! Library target so integration tests (and `main.rs`) can use `AppState`/`ParrotApp` as a
+//! normal dependency. `main.rs` stays a thin binary wrapper around this crate.
+
+pub mod annotations;
+pub mod attachments;
+pub mod badges;
+pub mod char_counter;
+pub mod container_view;
+pub mod editor;
+pub mod editor_keys;
+pub mod editor_state;
+pub mod export_modal;
+pub mod export_ui;
+pub mod filters_ui;
+pub mod first_run;
+pub mod focus_mode;
+pub mod goal_ui;
+pub mod grammar;
+pub mod icons;
+pub mod import_ui;
+pub mod inspector;
+pub mod keyword_manager;
+pub mod language;
+pub mod layout;
+pub mod markdown_blocks;
+pub mod os;
+pub mod preferences;
+pub mod recent_library;
+pub mod render;
+pub mod scroll_speed;
+pub mod search_ui;
+pub mod selection;
+pub mod sheet_list;
+pub mod shelf;
+pub mod shortcuts;
+pub mod sidebar;
+pub mod spellcheck;
+pub mod state;
+pub mod style_picker;
+pub mod text_shaping_spike;
+pub mod tokens;
+pub mod toolbar;
+pub mod tree_ops;
+pub mod ui;

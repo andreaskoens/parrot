@@ -1,0 +1,11 @@
+[package]
+name = "parrot-style"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+parrot-core = { path = "../parrot-core" }
+thiserror.workspace = true
+pest = "=2.7.15"
+pest_derive = "=2.7.15"
