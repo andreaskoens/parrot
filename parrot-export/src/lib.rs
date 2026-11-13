@@ -5,6 +5,7 @@
 #[cfg(test)]
 mod consolidated_tests;
 pub mod conversion;
+pub mod css;
 pub mod docx;
 pub mod dsl;
 pub mod epub;
