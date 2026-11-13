@@ -598,6 +598,8 @@ impl ParrotApp {
 
     fn save_preferences(&mut self) {
         self.preferences.default_style_name = self.style_picker.selected_name.clone();
+        self.preferences.export_style_name = self.export.style_name.clone();
+        self.preferences.export_css_path = self.export.custom_css_path.clone();
         if let Some(path) = self.preferences_path() {
             self.status = match self.preferences.save(&path) {
                 Ok(()) => "Preferences saved.".to_string(),
@@ -1196,7 +1198,10 @@ impl ParrotApp {
             .library_path
             .as_ref()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-        self.export.style_name = self.style_picker.selected_name.clone();
+        // The export style is the dialog's own setting (persisted in preferences),
+        // not the editor's ULSS style — the old coupling never changed any output.
+        self.export.style_name = self.preferences.export_style_name.clone();
+        self.export.custom_css_path = self.preferences.export_css_path.clone();
         self.export.open_for(paths, &title, folder.as_deref());
     }
 
@@ -1217,13 +1222,17 @@ impl ParrotApp {
         }
         let content = self.glued_content(&paths);
         let what = Self::sheets_label(&self.export.title, paths.len());
-        self.status = match self.export.export(&content) {
+        let (result, warning) = self.export.export(&content);
+        self.status = match result {
             Ok(dest) => {
-                let status = format!(
+                let mut status = format!(
                     "Exported {what} as {} to {}",
                     self.export.format.label(),
                     dest.display()
                 );
+                if let Some(note) = warning {
+                    status.push_str(&format!(" ({note})"));
+                }
                 self.last_export_path = Some(dest);
                 status
             }
@@ -1536,6 +1545,25 @@ impl ParrotApp {
                 dest.set_extension(format.extension());
             }
             self.export.destination = dest.display().to_string();
+        }
+    }
+
+    /// Picks a custom CSS file for the export dialog and validates it reads as text.
+    /// The file is re-read on every export, so outside edits apply without re-picking.
+    fn browse_export_css(&mut self) {
+        const CSS_FILTERS: [crate::os::FileFilter; 1] = [("Cascading Style Sheets", &["css"])];
+        match self.os.pick_file("Custom Export CSS", &CSS_FILTERS) {
+            None => {}
+            Some(path) => match std::fs::read_to_string(&path) {
+                Ok(_) => {
+                    self.status = format!("Custom style: {}", path.display());
+                    self.export.custom_css_path = Some(path);
+                    self.save_preferences();
+                }
+                Err(e) => {
+                    self.status = format!("Couldn't read {}: {e}", path.display());
+                }
+            },
         }
     }
 
@@ -3786,13 +3814,20 @@ impl ParrotApp {
         let content = self.glued_content(&self.export.targets);
         let mut export_clicked = false;
         let mut browse = false;
+        let mut css_browse = false;
         let mut open = true;
         let scope = Self::sheets_label(&self.export.title, self.export.targets.len());
         Self::modal("Export").open(&mut open).show(ctx, |ui| {
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(EXPORT_OPTIONS_WIDTH);
-                    self.export_options(ui, &scope, &mut browse, &mut export_clicked);
+                    self.export_options(
+                        ui,
+                        &scope,
+                        &mut browse,
+                        &mut css_browse,
+                        &mut export_clicked,
+                    );
                 });
                 ui.separator();
                 ui.vertical(|ui| self.export_preview(ui, &content));
@@ -3804,17 +3839,21 @@ impl ParrotApp {
         if browse {
             self.browse_export_destination();
         }
+        if css_browse {
+            self.browse_export_css();
+        }
         if export_clicked {
             self.run_export();
         }
     }
 
-    /// The export dialog's left column: format, page settings, destination and Export.
+    /// The export dialog's left column: format, style, page settings, destination and Export.
     fn export_options(
         &mut self,
         ui: &mut Ui,
         scope: &str,
         browse: &mut bool,
+        css_browse: &mut bool,
         export_clicked: &mut bool,
     ) {
         ui.label(text(
@@ -3853,7 +3892,93 @@ impl ParrotApp {
                     }
                 }
             });
+            // An `@page size` in the active style wins over the picker above
+            // (preview and export both use it) — say so instead of letting the
+            // picker look live when it isn't.
+            if let Some(forced) = self.export.active_page_override() {
+                ui.label(text(
+                    format!(
+                        "Style sets {} — page selection ignored",
+                        ExportModal::page_override_label(forced)
+                    ),
+                    tokens::UI_CAPTION,
+                    tokens::TEXT_QUATERNARY,
+                ));
+            }
         }
+        ui.add_space(2.0 * tokens::GRID);
+        ui.label(text("STYLE", tokens::UI_SECTION, tokens::TEXT_QUATERNARY));
+        ui.horizontal(|ui| {
+            let current = self
+                .export
+                .active_style_label()
+                .unwrap_or_else(|| "Built-in".to_string());
+            egui::ComboBox::from_id_salt("export-style")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for name in crate::export_styles::available_names() {
+                        let value = if name == crate::export_styles::BUILT_IN_NAME {
+                            None
+                        } else {
+                            Some(name.to_string())
+                        };
+                        if ui
+                            .selectable_label(
+                                self.export.style_name == value
+                                    && self.export.custom_css_path.is_none(),
+                                name,
+                            )
+                            .clicked()
+                        {
+                            self.export.style_name = value;
+                            self.export.custom_css_path = None;
+                            self.save_preferences();
+                        }
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            if ui
+                .button(text(
+                    format!("{} Custom CSS…", crate::icons::FILE),
+                    tokens::UI_CAPTION,
+                    tokens::TEXT_SECONDARY,
+                ))
+                .clicked()
+            {
+                *css_browse = true;
+            }
+            if self.export.custom_css_path.is_some() {
+                ui.label(text(
+                    self.export
+                        .custom_css_path
+                        .as_ref()
+                        .and_then(|p| p.file_name())
+                        .map_or_else(
+                            || "Custom CSS".to_string(),
+                            |n| format!("Custom: {}", n.to_string_lossy()),
+                        ),
+                    tokens::UI_CAPTION,
+                    tokens::TEXT_TERTIARY,
+                ));
+                if ui
+                    .button(text(
+                        format!("{} Clear", crate::icons::REMOVE),
+                        tokens::UI_CAPTION,
+                        tokens::TEXT_SECONDARY,
+                    ))
+                    .clicked()
+                {
+                    self.export.custom_css_path = None;
+                    self.save_preferences();
+                }
+            }
+        });
+        ui.label(text(
+            "Plain text ignores styling.",
+            tokens::UI_CAPTION,
+            tokens::TEXT_QUATERNARY,
+        ));
         ui.add_space(2.0 * tokens::GRID);
         ui.label(text("PREVIEW", tokens::UI_SECTION, tokens::TEXT_QUATERNARY));
         let theme = match self.export.theme {
@@ -3931,7 +4056,7 @@ impl ParrotApp {
                                 });
                         }
                         PreviewBody::Pages(pages) => {
-                            let (w_mm, h_mm) = preview.input.page_size.mm();
+                            let (w_mm, h_mm) = preview.page_mm;
                             let scale = (ui.available_width() / w_mm).max(0.1);
                             for page in pages {
                                 let (rect, _) = ui.allocate_exact_size(
@@ -3947,16 +4072,17 @@ impl ParrotApp {
                                     } else {
                                         egui::FontFamily::Proportional
                                     };
+                                    let color = line
+                                        .color
+                                        .map(|(r, g, b)| egui::Color32::from_rgb(r, g, b))
+                                        .unwrap_or(ink);
                                     painter.text(
                                         rect.left_top()
-                                            + egui::vec2(
-                                                parrot_export::pdf::MARGIN_MM * scale,
-                                                line.top_mm * scale,
-                                            ),
+                                            + egui::vec2(line.left_mm * scale, line.top_mm * scale),
                                         Align2::LEFT_BOTTOM,
                                         &line.text,
                                         egui::FontId::new(size, family),
-                                        ink,
+                                        color,
                                     );
                                 }
                                 ui.add_space(2.0 * tokens::GRID);

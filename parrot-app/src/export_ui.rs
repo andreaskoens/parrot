@@ -123,9 +123,13 @@ impl PageSize {
 }
 
 /// Per-export settings beyond the format itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExportOptions {
     pub page_size: PageSize,
+    /// Raw user CSS for the export, if the active style sets one. HTML and EPUB embed
+    /// it verbatim; PDF, DOCX and RTF map the supported subset onto their own styling
+    /// (see `parrot_export::css`); Markdown, plain text and TextBundle ignore it.
+    pub css: Option<String>,
 }
 
 /// Dispatches `content` to `format`'s backend with default [`ExportOptions`] (A4).
@@ -148,6 +152,18 @@ pub fn export_sheet_with(
     dest: &Path,
     options: ExportOptions,
 ) -> Result<(), ExportError> {
+    // An empty-or-absent stylesheet means the legacy path, byte for byte what previous
+    // versions wrote: an active stylesheet always governs (even its untouched defaults),
+    // while no stylesheet changes nothing.
+    let css = options.css.as_deref().filter(|s| !s.trim().is_empty());
+    let theme;
+    let themed: Option<&parrot_export::css::ExportTheme> = match css {
+        Some(css) => {
+            theme = parrot_export::css::ExportTheme::from_css(css);
+            Some(&theme)
+        }
+        None => None,
+    };
     match format {
         ExportFormat::Markdown => {
             fs::write(dest, parrot_export::mvp::export_markdown(content))?;
@@ -155,28 +171,45 @@ pub fn export_sheet_with(
         ExportFormat::PlainText => {
             fs::write(dest, parrot_export::mvp::export_plain_text(content))?;
         }
-        ExportFormat::Html => {
-            fs::write(dest, parrot_export::html::export_html(content))?;
-        }
-        ExportFormat::Rtf => {
-            fs::write(dest, parrot_export::rtf::export_rtf(content))?;
-        }
+        ExportFormat::Html => match themed {
+            Some(t) => fs::write(dest, parrot_export::html::export_html_with(content, t))?,
+            None => fs::write(dest, parrot_export::html::export_html(content))?,
+        },
+        ExportFormat::Rtf => match themed {
+            Some(t) => fs::write(dest, parrot_export::rtf::export_rtf_with(content, t))?,
+            None => fs::write(dest, parrot_export::rtf::export_rtf(content))?,
+        },
         ExportFormat::Docx => {
-            let bytes = parrot_export::docx::export_docx(content)
-                .map_err(|e| ExportError::Backend(e.to_string()))?;
+            let bytes = match themed {
+                Some(t) => parrot_export::docx::export_docx_with(content, t),
+                None => parrot_export::docx::export_docx(content),
+            }
+            .map_err(|e| ExportError::Backend(e.to_string()))?;
             fs::write(dest, bytes)?;
         }
         ExportFormat::Epub => {
-            let bytes = parrot_export::epub::export_epub(content)
-                .map_err(|e| ExportError::Backend(e.to_string()))?;
+            let bytes = match themed {
+                Some(t) => parrot_export::epub::export_epub_with(content, t),
+                None => parrot_export::epub::export_epub(content),
+            }
+            .map_err(|e| ExportError::Backend(e.to_string()))?;
             fs::write(dest, bytes)?;
         }
-        ExportFormat::Pdf => {
-            fs::write(
-                dest,
-                parrot_export::pdf::export_pdf_sized(content, options.page_size.mm()),
-            )?;
-        }
+        ExportFormat::Pdf => match themed {
+            Some(t) => {
+                let size = t.page_dims_mm(options.page_size.mm());
+                fs::write(
+                    dest,
+                    parrot_export::pdf::export_pdf_sized_with(content, size, t),
+                )?;
+            }
+            None => {
+                fs::write(
+                    dest,
+                    parrot_export::pdf::export_pdf_sized(content, options.page_size.mm()),
+                )?;
+            }
+        },
         ExportFormat::TextBundle => {
             parrot_export::textbundle::export_textbundle(dest, content)
                 .map_err(|e| ExportError::Backend(e.to_string()))?;
@@ -303,6 +336,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn css_reaches_the_backend_through_dispatch() {
+        let dir = tempfile::tempdir().expect("tempdir must be creatable");
+        let dest = dir.path().join("out.html");
+        export_sheet_with(
+            ExportFormat::Html,
+            &sample(),
+            &dest,
+            ExportOptions {
+                page_size: PageSize::default(),
+                css: Some("h1 { color: #112233; }".to_string()),
+            },
+        )
+        .expect("export must succeed");
+        let html = fs::read_to_string(&dest).unwrap();
+        assert!(
+            html.contains("#112233"),
+            "the stylesheet must reach the file"
+        );
+        assert!(html.contains("<style>"), "embedded as a style element");
+    }
+
+    #[test]
+    fn blank_css_behaves_like_no_css_at_all() {
+        let dir = tempfile::tempdir().expect("tempdir must be creatable");
+        let plain = dir.path().join("plain.html");
+        export_sheet(ExportFormat::Html, &sample(), &plain).expect("export must succeed");
+        let blank = dir.path().join("blank.html");
+        export_sheet_with(
+            ExportFormat::Html,
+            &sample(),
+            &blank,
+            ExportOptions {
+                page_size: PageSize::default(),
+                css: Some("  \n ".to_string()),
+            },
+        )
+        .expect("export must succeed");
+        assert_eq!(
+            fs::read(&plain).unwrap(),
+            fs::read(&blank).unwrap(),
+            "blank CSS must take the legacy path"
+        );
+    }
+
     /// The written `.md` file parses back into the very sheet that was exported.
     #[test]
     fn exported_markdown_reads_back_as_the_same_sheet() {
@@ -325,6 +403,7 @@ mod tests {
         let dest = dir.path().join("out.pdf");
         let options = ExportOptions {
             page_size: PageSize::Letter,
+            css: None,
         };
         export_sheet_with(ExportFormat::Pdf, &sample(), &dest, options)
             .expect("export must succeed");
