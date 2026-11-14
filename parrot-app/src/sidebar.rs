@@ -98,14 +98,18 @@ pub const PROJECTS_HEADING: &str = "Projects";
 pub const FILTERS_HEADING: &str = "Filters";
 /// macOS-only heading for iCloud Drive projects (hidden elsewhere).
 pub const ICLOUD_HEADING: &str = "iCloud";
+/// Google Drive projects heading. Shown on all platforms (unlike iCloud):
+/// Drive is a remote API, not an OS folder, so availability doesn't depend on macOS.
+pub const GOOGLE_DRIVE_HEADING: &str = "Google Drive";
 
 /// Root rows: Library (the shelf), the smart filters, every project under PROJECTS, then the
 /// root-level saved filters under FILTERS when there are any. Sheets and sections live inside
 /// projects; anything else at the root (from a library predating that rule) lists last.
 ///
 /// On macOS, iCloud-section projects list under their own ICLOUD heading so one
-/// library shows both stores; on other platforms everything lists under PROJECTS
-/// (iCloud UI is hidden there).
+/// library shows both stores; on other platforms everything non-Drive lists under
+/// PROJECTS (iCloud UI is hidden there). Google Drive-section projects always list
+/// under their own GOOGLE DRIVE heading, on every platform.
 pub fn root_rows(library: &Library) -> Vec<SidebarRow> {
     let mut rows = vec![SidebarRow::Shelf];
     rows.extend(SmartFilter::ALL.into_iter().map(SidebarRow::Smart));
@@ -116,55 +120,58 @@ pub fn root_rows(library: &Library) -> Vec<SidebarRow> {
     };
     let mut order: Vec<usize> = (0..library.children.len()).collect();
     order.sort_by_key(|i| (kind(i), *i));
+    let mut local: Vec<usize> = Vec::new();
+    let mut icloud: Vec<usize> = Vec::new();
+    let mut gdrive: Vec<usize> = Vec::new();
+    let mut filters: Vec<usize> = Vec::new();
+    let mut other: Vec<usize> = Vec::new();
+    for i in order {
+        match &library.children[i] {
+            Node::Project(p) if p.section.is_icloud() => icloud.push(i),
+            Node::Project(p) if p.section.is_google_drive() => gdrive.push(i),
+            Node::Project(_) => local.push(i),
+            Node::Filter(_) => filters.push(i),
+            _ => other.push(i),
+        }
+    }
+    rows.push(SidebarRow::Heading(PROJECTS_HEADING));
+    for i in local {
+        rows.push(SidebarRow::Node(vec![i]));
+    }
+    // Always show the iCloud heading on macOS (even when empty) so there is
+    // a visible place to create the first iCloud project. Other platforms
+    // never show it.
     #[cfg(target_os = "macos")]
     {
-        let mut local: Vec<usize> = Vec::new();
-        let mut icloud: Vec<usize> = Vec::new();
-        let mut filters: Vec<usize> = Vec::new();
-        let mut other: Vec<usize> = Vec::new();
-        for i in order {
-            match &library.children[i] {
-                Node::Project(p) if p.section.is_icloud() => icloud.push(i),
-                Node::Project(_) => local.push(i),
-                Node::Filter(_) => filters.push(i),
-                _ => other.push(i),
-            }
-        }
-        rows.push(SidebarRow::Heading(PROJECTS_HEADING));
-        for i in local {
-            rows.push(SidebarRow::Node(vec![i]));
-        }
-        // Always show the iCloud heading on macOS (even when empty) so there is
-        // a visible place to create the first iCloud project. Other platforms
-        // never show it.
         rows.push(SidebarRow::Heading(ICLOUD_HEADING));
         for i in icloud {
             rows.push(SidebarRow::Node(vec![i]));
         }
-        if !filters.is_empty() {
-            rows.push(SidebarRow::Heading(FILTERS_HEADING));
-            for i in filters {
-                rows.push(SidebarRow::Node(vec![i]));
-            }
-        }
-        for i in other {
-            rows.push(SidebarRow::Node(vec![i]));
-        }
-        rows
     }
     #[cfg(not(target_os = "macos"))]
     {
-        rows.push(SidebarRow::Heading(PROJECTS_HEADING));
-        let mut filters_shown = false;
-        for i in order {
-            if kind(&i) == 1 && !filters_shown {
-                rows.push(SidebarRow::Heading(FILTERS_HEADING));
-                filters_shown = true;
-            }
+        // Off-mac, iCloud projects (opened from a synced library) list with the
+        // local ones rather than vanishing: the iCloud store doesn't exist here.
+        for i in icloud {
             rows.push(SidebarRow::Node(vec![i]));
         }
-        rows
     }
+    // Always shown on every platform, even when empty: Drive is a remote API,
+    // so unlike iCloud there is no OS folder whose presence gates the heading.
+    rows.push(SidebarRow::Heading(GOOGLE_DRIVE_HEADING));
+    for i in gdrive {
+        rows.push(SidebarRow::Node(vec![i]));
+    }
+    if !filters.is_empty() {
+        rows.push(SidebarRow::Heading(FILTERS_HEADING));
+        for i in filters {
+            rows.push(SidebarRow::Node(vec![i]));
+        }
+    }
+    for i in other {
+        rows.push(SidebarRow::Node(vec![i]));
+    }
+    rows
 }
 
 /// Every library node row in display order — root rows as [`root_rows`] orders them, each
@@ -254,8 +261,10 @@ pub enum ContextAction {
     CopyFolderPath,
     /// Moves a project to the iCloud section (macOS only; hidden elsewhere).
     MoveToICloud,
-    /// Moves a project back to the local section (macOS only; hidden elsewhere).
+    /// Moves a project back to the local section.
     MoveToLocal,
+    /// Moves a project to the Google Drive section (all platforms).
+    MoveToGDrive,
 }
 
 impl ContextAction {
@@ -276,12 +285,14 @@ impl ContextAction {
             ContextAction::CopyFolderPath => "Copy Folder Path",
             ContextAction::MoveToICloud => "Move to iCloud",
             ContextAction::MoveToLocal => "Move to Local",
+            ContextAction::MoveToGDrive => "Move to Google Drive",
         }
     }
 
     /// The actions offered for `node`, in §3.4 order. Keywords/Export are sheet-only (the
     /// keyword and export models are per-sheet); a Filter can't carry a Goal.
-    /// iCloud moves are offered for projects only, and only on macOS.
+    /// iCloud moves are offered for projects only, and only on macOS; Google Drive
+    /// moves are offered on all platforms.
     pub fn for_node(node: &Node) -> Vec<ContextAction> {
         use ContextAction::*;
         let mut actions = vec![
@@ -304,17 +315,22 @@ impl ContextAction {
         }
         if let Node::Project(p) = node {
             actions.push(CopyFolderPath);
-            #[cfg(target_os = "macos")]
-            {
-                actions.push(if p.section.is_icloud() {
-                    MoveToLocal
-                } else {
-                    MoveToICloud
-                });
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = p.section;
+            if p.section.is_google_drive() {
+                actions.push(MoveToLocal);
+            } else {
+                actions.push(MoveToGDrive);
+                #[cfg(target_os = "macos")]
+                {
+                    actions.push(if p.section.is_icloud() {
+                        MoveToLocal
+                    } else {
+                        MoveToICloud
+                    });
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = p.section;
+                }
             }
         }
         actions.push(GetInfo);
@@ -410,6 +426,13 @@ pub fn apply_context_action(
         ContextAction::MoveToLocal => {
             state.move_project_to_local(path)?;
             let _ = state.save();
+            UiIntent::None
+        }
+        ContextAction::MoveToGDrive => {
+            state.move_project_to_gdrive(path)?;
+            // Persist immediately; the next Drive sync uploads it.
+            let _ = state.save();
+            state.save_gdrive_state();
             UiIntent::None
         }
     })
@@ -586,12 +609,17 @@ mod tests {
                 SidebarRow::Node(vec![0]),
                 SidebarRow::Node(vec![1]),
                 SidebarRow::Heading(ICLOUD_HEADING),
+                SidebarRow::Heading(GOOGLE_DRIVE_HEADING),
             ]
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
             rows[5..],
-            [SidebarRow::Node(vec![0]), SidebarRow::Node(vec![1])]
+            [
+                SidebarRow::Node(vec![0]),
+                SidebarRow::Node(vec![1]),
+                SidebarRow::Heading(GOOGLE_DRIVE_HEADING),
+            ]
         );
         assert!(!rows
             .iter()
@@ -616,8 +644,23 @@ mod tests {
                 SidebarRow::Node(vec![0]),
                 SidebarRow::Heading(ICLOUD_HEADING),
                 SidebarRow::Node(vec![1]),
+                SidebarRow::Heading(GOOGLE_DRIVE_HEADING),
             ]
         );
+    }
+
+    #[test]
+    fn root_rows_splits_gdrive_projects_on_all_platforms() {
+        let mut state = AppState::new();
+        state.create_project("Local");
+        state.create_project_in_section("Remote", parrot_core::Section::GoogleDrive);
+        let rows = root_rows(&state.library);
+        let drive_pos = rows
+            .iter()
+            .position(|r| *r == SidebarRow::Heading(GOOGLE_DRIVE_HEADING))
+            .expect("drive heading always shown");
+        assert_eq!(rows[drive_pos + 1], SidebarRow::Node(vec![1]));
+        assert!(rows.contains(&SidebarRow::Node(vec![0])));
     }
 
     #[test]

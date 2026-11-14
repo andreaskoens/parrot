@@ -229,8 +229,9 @@ pub(crate) fn save_children(dir: &Path, children: &[Node], root: &Path) -> Resul
 const PROJECT_META_FILE: &str = ".project-meta";
 
 /// Writes the project's meta file in `dir`, or removes it when there is nothing to store.
-/// `section=icloud` is written for iCloud projects; local is the default and writes no
-/// section line so old libraries stay byte-identical.
+/// A non-local section is always written (`section=icloud|googledrive`) so the store
+/// stays authoritative; local is the default and writes no section line so old
+/// libraries stay byte-identical.
 pub(crate) fn write_project_meta(
     dir: &Path,
     language: Option<&str>,
@@ -241,8 +242,8 @@ pub(crate) fn write_project_meta(
     if let Some(l) = language.filter(|l| !l.trim().is_empty()) {
         lines.push(format!("language={}\n", l.trim()));
     }
-    if section.is_icloud() {
-        lines.push("section=icloud\n".to_string());
+    if section != Section::Local {
+        lines.push(format!("section={}\n", section.as_str()));
     }
     if lines.is_empty() {
         match fs::remove_file(&path) {

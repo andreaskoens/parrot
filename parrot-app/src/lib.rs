@@ -15,6 +15,7 @@ pub mod export_ui;
 pub mod filters_ui;
 pub mod first_run;
 pub mod focus_mode;
+pub mod gdrive;
 pub mod goal_ui;
 pub mod grammar;
 pub mod icloud;

@@ -1,3 +1,6 @@
 # Paths (relative to the scanned root) explicitly permitted to use std::net.
-# Empty by design: this project has no legitimate use for raw networking.
 # One path per line; '#' starts a comment.
+#
+# Google Drive sync (owner-approved, see DECISIONS.md BLD-07): the OAuth PKCE
+# loopback listener in parrot-app/src/gdrive.rs. All other std::net use stays banned.
+parrot-app/src/gdrive.rs

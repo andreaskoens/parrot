@@ -8,7 +8,16 @@ license.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml = "0.8"
+# Google Drive sync (owner-approved network exception, BLD-07): blocking HTTPS
+# with platform TLS, no async runtime, no C build scripts on shipped targets.
+minreq = { version = "3", default-features = false, features = ["https-native-tls", "json-using-serde"] }
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.2"
+url = "2"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 parrot-core = { path = "../parrot-core" }
 parrot-container = { path = "../parrot-container" }
 parrot-markup = { path = "../parrot-markup" }

@@ -56,6 +56,10 @@ pub struct AppState {
     /// Separate iCloud library root (`~/Library/Mobile Documents/.../Parrot`
     /// on macOS). `None` on Windows/Linux or when iCloud Drive is off.
     pub icloud_path: Option<PathBuf>,
+    /// Google Drive sync bookkeeping (remote file IDs + hashes, keyed by
+    /// project title). The projects themselves live in `library_path`
+    /// alongside local ones; Drive is purely remote storage.
+    pub gdrive_state: crate::gdrive::DriveSyncState,
     /// Writing-activity series (T-10-10) across the whole library. `day` is an opaque session
     /// counter this app bumps itself (`start_new_day`) — there's no real calendar source here
     /// (no `chrono` dependency), see `parrot_core::statistics`'s own doc.
@@ -165,6 +169,7 @@ impl AppState {
         self.library_path = Some(path.to_path_buf());
         self.personal_dictionary = PersonalDictionary::default();
         self.trash.clear();
+        self.gdrive_state = crate::gdrive::DriveSyncState::default();
     }
 
     /// Loads an existing library tree from `path` (feature inventory §2, via parrot-container).
@@ -182,6 +187,7 @@ impl AppState {
         self.personal_dictionary =
             PersonalDictionary::load(&path.join(DICTIONARY_FILE)).unwrap_or_default();
         self.trash.clear();
+        self.gdrive_state = crate::gdrive::DriveSyncState::load(path);
         let mut adopted = self.adopt_loose_nodes();
         if let Some(icloud) = self.icloud_path.clone() {
             if icloud != path {
@@ -250,6 +256,30 @@ impl AppState {
             .collect()
     }
 
+    /// The Google Drive-section projects, in library order.
+    pub fn gdrive_projects(&self) -> Vec<NodePath> {
+        self.library
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| matches!(n, Node::Project(p) if p.section.is_google_drive()))
+            .map(|(i, _)| vec![i])
+            .collect()
+    }
+
+    /// Finds a project by exact title ( Drive sync matches remote files to
+    /// local projects by title; see `gdrive` docs for the rename limitation).
+    pub fn find_project_by_title(&self, title: &str) -> Option<NodePath> {
+        self.library
+            .children
+            .iter()
+            .enumerate()
+            .find_map(|(i, n)| match n {
+                Node::Project(p) if p.title == title => Some(vec![i]),
+                _ => None,
+            })
+    }
+
     /// The local-section projects, in library order.
     pub fn local_projects(&self) -> Vec<NodePath> {
         self.library
@@ -276,6 +306,18 @@ impl AppState {
         }
     }
 
+    /// Moves the project at `path` to the Google Drive section (stays in place
+    /// in the tree; `save` keeps it in the local folder and sync uploads it).
+    pub fn move_project_to_gdrive(&mut self, path: &[usize]) -> Result<(), StateError> {
+        match self.node_mut(path)? {
+            Node::Project(p) => {
+                p.section = parrot_core::Section::GoogleDrive;
+                Ok(())
+            }
+            _ => Err(StateError::NotAProject),
+        }
+    }
+
     /// Moves the project at `path` back to the local section.
     pub fn move_project_to_local(&mut self, path: &[usize]) -> Result<(), StateError> {
         match self.node_mut(path)? {
@@ -284,6 +326,50 @@ impl AppState {
                 Ok(())
             }
             _ => Err(StateError::NotAProject),
+        }
+    }
+
+    /// Applies a finished Drive sync to the live library: upserts projects
+    /// materialized from remote bytes (replace in place by title, else append),
+    /// and moves remotely-deleted projects to Trash. Returns (applied, trashed).
+    /// Callers must `save()` + `save_gdrive_state()` afterwards.
+    pub fn apply_gdrive_output(
+        &mut self,
+        upserts: Vec<parrot_core::Project>,
+        remote_deleted: Vec<String>,
+    ) -> (usize, usize) {
+        let mut applied = 0;
+        for project in upserts {
+            let title = project.title.clone();
+            match self.find_project_by_title(&title) {
+                Some(path) => {
+                    if let Ok(Node::Project(slot)) = self.node_mut(&path) {
+                        *slot = project;
+                        applied += 1;
+                    }
+                }
+                None => {
+                    self.library.children.push(Node::Project(project));
+                    applied += 1;
+                }
+            }
+        }
+        let mut trashed = 0;
+        for title in remote_deleted {
+            if let Some(path) = self.find_project_by_title(&title) {
+                if self.move_to_trash(&path).is_ok() {
+                    trashed += 1;
+                }
+            }
+        }
+        (applied, trashed)
+    }
+
+    /// Persists the Google Drive sync bookkeeping next to the library.
+    /// Best-effort like `remember_library`: a sync still works without it.
+    pub fn save_gdrive_state(&self) {
+        if let Some(dir) = self.library_path.as_ref() {
+            let _ = self.gdrive_state.save(dir);
         }
     }
 
@@ -359,8 +445,9 @@ impl AppState {
 
     /// The folder the node at `path` is stored in under the library folder, as of the next
     /// save. `None` without a library folder or for a node that isn't stored (filters).
-    /// iCloud-section projects resolve under the iCloud store; everything else
-    /// under the local library folder.
+    /// iCloud-section projects resolve under the iCloud store; local and Google Drive
+    /// projects resolve under the local library folder (Drive is remote-only storage,
+    /// the local disk is its cache).
     pub fn node_folder(&self, path: &[usize]) -> Option<PathBuf> {
         let section = match self.node(path).ok()? {
             Node::Project(p) => Some(p.section),
@@ -371,19 +458,26 @@ impl AppState {
                     _ => None,
                 }),
         };
-        let root = if section == Some(parrot_core::Section::ICloud) {
+        let icloud = section == Some(parrot_core::Section::ICloud);
+        let root = if icloud {
             self.icloud_path.as_ref().or(self.library_path.as_ref())?
         } else {
             self.library_path.as_ref()?
         };
-        // Partitioned save keeps each section in its own root, so resolve the
-        // disk path against a section-filtered view of the tree.
-        let view = self.section_view(section.unwrap_or(parrot_core::Section::Local));
+        // Each on-disk root holds a fixed section set (iCloud alone; local plus
+        // Google Drive), so resolve the disk path against the matching view.
+        let view = if icloud {
+            self.section_view(parrot_core::Section::ICloud)
+        } else {
+            self.local_root_view()
+        };
         let mut index_map: Vec<usize> = Vec::new();
         for (i, child) in self.library.children.iter().enumerate() {
+            // The iCloud root holds iCloud projects only; the local root holds
+            // local and Google Drive projects (Drive's local cache) plus filters.
             let keep = match child {
-                Node::Project(p) => p.section == section.unwrap_or(parrot_core::Section::Local),
-                Node::Filter(_) => section == Some(parrot_core::Section::Local),
+                Node::Project(p) => p.section.is_icloud() == icloud,
+                Node::Filter(_) => !icloud,
                 _ => false,
             };
             if keep {
@@ -416,9 +510,28 @@ impl AppState {
         }
     }
 
-    /// Persists the current in-memory tree. Local projects go to `library_path`;
-    /// iCloud projects go to `icloud_path` when set, else alongside local so
-    /// nothing is lost on machines without iCloud Drive.
+    /// What lives in `library_path` on disk: local and Google Drive projects
+    /// (Drive's local cache) plus filters. iCloud projects live in their own store.
+    fn local_root_view(&self) -> Library {
+        Library {
+            children: self
+                .library
+                .children
+                .iter()
+                .filter(|n| match n {
+                    Node::Project(p) => !p.section.is_icloud(),
+                    Node::Filter(_) => true,
+                    _ => false,
+                })
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Persists the current in-memory tree. Local and Google Drive projects go to
+    /// `library_path` (the local disk is Drive's cache); iCloud projects go to
+    /// `icloud_path` when set, else alongside local so nothing is lost on
+    /// machines without iCloud Drive.
     pub fn save(&self) -> Result<(), StateError> {
         let local_path = self
             .library_path
@@ -431,7 +544,7 @@ impl AppState {
             return parrot_container::tree::save_library(local_path, &self.library)
                 .map_err(|e| StateError::Io(e.to_string()));
         }
-        let local_view = self.section_view(parrot_core::Section::Local);
+        let local_view = self.local_root_view();
         parrot_container::tree::save_library(local_path, &local_view)
             .map_err(|e| StateError::Io(e.to_string()))?;
         let icloud_view = self.section_view(parrot_core::Section::ICloud);
@@ -1382,5 +1495,97 @@ mod tests {
             local.path().join("Nomad.ulproject").is_dir(),
             "project returns to the local store"
         );
+    }
+
+    #[test]
+    fn gdrive_projects_live_in_the_local_folder_with_their_section() {
+        let local = tempfile::tempdir().expect("tempdir");
+        let mut state = AppState::new();
+        state.library_path = Some(local.path().to_path_buf());
+        state.create_project("Local Novel");
+        state.create_project_in_section("Drive Novel", parrot_core::Section::GoogleDrive);
+        state.create_sheet(&[1], "Ch 1").expect("sheet");
+        state.save().expect("save");
+        // Both on local disk; the Drive one carries its section in meta.
+        assert!(local.path().join("Local Novel.ulproject").is_dir());
+        assert!(local.path().join("Drive Novel.ulproject").is_dir());
+        let meta = std::fs::read_to_string(
+            local
+                .path()
+                .join("Drive Novel.ulproject")
+                .join(".project-meta"),
+        )
+        .expect("meta");
+        assert!(meta.contains("section=googledrive"), "{meta}");
+        // Reopen: sections survive, state sidecar round-trips.
+        state.gdrive_state.entries.insert(
+            "Drive Novel".to_string(),
+            crate::gdrive::DriveEntry {
+                file_id: "f1".to_string(),
+                hash: 42,
+                remote_modified: "2026-01-01T00:00:00Z".to_string(),
+            },
+        );
+        state.save_gdrive_state();
+        let mut reopened = AppState::new();
+        reopened.library_path = Some(local.path().to_path_buf());
+        reopened.open_library(local.path()).expect("open");
+        assert_eq!(reopened.gdrive_projects(), vec![vec![1]]);
+        assert!(reopened.gdrive_state.entries.contains_key("Drive Novel"));
+        assert!(matches!(
+            reopened.node(&[1]),
+            Ok(Node::Project(p)) if p.section.is_google_drive()
+        ));
+    }
+
+    #[test]
+    fn moving_a_project_to_gdrive_stays_on_local_disk() {
+        let local = tempfile::tempdir().expect("tempdir");
+        let mut state = AppState::new();
+        state.library_path = Some(local.path().to_path_buf());
+        state.create_project("Nomad");
+        state.save().expect("save");
+        state.move_project_to_gdrive(&[0]).expect("move to gdrive");
+        state.save().expect("save");
+        // Drive is remote storage: the project stays in the local folder,
+        // retagged, ready for the next sync upload.
+        assert!(local.path().join("Nomad.ulproject").is_dir());
+        assert_eq!(state.gdrive_projects(), vec![vec![0]]);
+        let meta =
+            std::fs::read_to_string(local.path().join("Nomad.ulproject").join(".project-meta"))
+                .expect("meta");
+        assert!(meta.contains("section=googledrive"), "{meta}");
+    }
+
+    #[test]
+    fn apply_gdrive_output_upserts_and_trashes() {
+        let mut state = AppState::new();
+        state.create_project("Keep");
+        state.create_project_in_section("Stale", parrot_core::Section::GoogleDrive);
+        // Remote touched "Keep" (replace in place) and added "Fresh".
+        let replacement = parrot_core::Project {
+            title: "Keep".to_string(),
+            children: vec![Node::Group(parrot_core::Group {
+                title: "New Section".to_string(),
+                children: Vec::new(),
+                goal: None,
+            })],
+            goal: None,
+            language: None,
+            section: parrot_core::Section::GoogleDrive,
+        };
+        let fresh = parrot_core::Project {
+            title: "Fresh".to_string(),
+            children: Vec::new(),
+            goal: None,
+            language: None,
+            section: parrot_core::Section::GoogleDrive,
+        };
+        let (applied, trashed) =
+            state.apply_gdrive_output(vec![replacement, fresh], vec!["Stale".to_string()]);
+        assert_eq!((applied, trashed), (2, 1));
+        assert_eq!(titles(&state, &[]), ["Keep", "Fresh"]);
+        assert_eq!(state.trash.len(), 1, "remote-deleted project is trashed");
+        assert_eq!(state.gdrive_projects().len(), 2);
     }
 }
