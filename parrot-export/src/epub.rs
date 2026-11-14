@@ -5,7 +5,8 @@
 //! already well-formed-XML output for the body content (one small adapter adds the XHTML
 //! namespace) instead of re-deriving an AST walker.
 
-use crate::html::export_html;
+use crate::css::ExportTheme;
+use crate::html::export_html_with;
 use parrot_core::SheetContent;
 use std::io::Write;
 use zip::write::SimpleFileOptions;
@@ -47,12 +48,26 @@ const CONTENT_OPF: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   </spine>
 </package>"#;
 
-fn to_xhtml(sheet: &SheetContent) -> String {
-    export_html(sheet).replacen("<html>", "<html xmlns=\"http://www.w3.org/1999/xhtml\">", 1)
+fn to_xhtml_with(sheet: &SheetContent, theme: &ExportTheme) -> String {
+    export_html_with(sheet, theme).replacen(
+        "<html>",
+        "<html xmlns=\"http://www.w3.org/1999/xhtml\">",
+        1,
+    )
 }
 
 pub fn export_epub(sheet: &SheetContent) -> Result<Vec<u8>, zip::result::ZipError> {
-    let xhtml = to_xhtml(sheet);
+    export_epub_with(sheet, &ExportTheme::builtin())
+}
+
+/// [`export_epub`], with a stylesheet applied: the theme's raw CSS is embedded in the
+/// chapter (the same inline `<style>` element the HTML backend emits — no separate file
+/// or manifest entry, since the book stays single-chapter).
+pub fn export_epub_with(
+    sheet: &SheetContent,
+    theme: &ExportTheme,
+) -> Result<Vec<u8>, zip::result::ZipError> {
+    let xhtml = to_xhtml_with(sheet, theme);
     let mut buf = Vec::new();
     {
         let mut zip = ZipWriter::new(std::io::Cursor::new(&mut buf));
@@ -149,5 +164,33 @@ mod tests {
             .unwrap();
         assert_well_formed_xml("content.xhtml", &content_xhtml);
         assert!(content_xhtml.contains("xmlns=\"http://www.w3.org/1999/xhtml\""));
+    }
+
+    #[test]
+    fn styled_chapter_embeds_the_stylesheet() {
+        use std::io::Read as _;
+        let css = "body { font-family: Georgia, serif; }";
+        let bytes = export_epub_with(&full_tag_document(), &ExportTheme::from_css(css))
+            .expect("export must succeed");
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("valid zip");
+        let mut xhtml = String::new();
+        archive
+            .by_name("OEBPS/content.xhtml")
+            .expect("content.xhtml")
+            .read_to_string(&mut xhtml)
+            .expect("readable");
+        assert!(xhtml.contains("<style>"), "styled EPUB keeps the CSS");
+        assert!(xhtml.contains(css), "stylesheet embedded verbatim");
+        assert_well_formed_xml("styled content.xhtml", &xhtml);
+        // Unstyled books carry no style element.
+        let plain = export_epub(&full_tag_document()).expect("export must succeed");
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(plain)).expect("valid zip");
+        let mut plain_xhtml = String::new();
+        archive
+            .by_name("OEBPS/content.xhtml")
+            .expect("content.xhtml")
+            .read_to_string(&mut plain_xhtml)
+            .expect("readable");
+        assert!(!plain_xhtml.contains("<style>"));
     }
 }

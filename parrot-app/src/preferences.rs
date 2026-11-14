@@ -41,6 +41,13 @@ pub struct Preferences {
     pub serif_font: String,
     pub monospace_font: String,
     pub default_style_name: Option<String>,
+    /// The export dialog's built-in style (`None` = the Built-in default look).
+    /// `default` keeps older prefs files (written before this field existed) loading.
+    #[serde(default)]
+    pub export_style_name: Option<String>,
+    /// A user-picked CSS file that wins over `export_style_name` while readable.
+    #[serde(default)]
+    pub export_css_path: Option<std::path::PathBuf>,
 }
 
 impl Default for Preferences {
@@ -50,6 +57,8 @@ impl Default for Preferences {
             serif_font: "Source Serif 4".to_string(),
             monospace_font: "Source Code Pro".to_string(),
             default_style_name: None,
+            export_style_name: None,
+            export_css_path: None,
         }
     }
 }

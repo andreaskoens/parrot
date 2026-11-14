@@ -109,3 +109,12 @@ no LGPL dictionary data is shipped (the earlier Marco A.G. Pinto `en_GB` files a
 gone, replaced by the same SCOWL family as `en_US`).
 
 **Both dictionaries vendored with attribution; crate tree MIT-only — resolved.**
+## Export styles: Ariadne's built-in CSS (same author)
+
+The four manuscript-style CSS export themes in `parrot-app/src/export_styles.rs`
+(Manuscript, Student, Paperback Novel, Professional) are adapted verbatim from Ariadne's
+built-in export styles. Ariadne is MIT-licensed and by the same author; the CSS text is an
+original work (no third-party font, image, or text bundled — only generic family names like
+`Georgia` and `Courier New`). The two "Parrot Default"/"Parrot Compact" styles are original
+to this project.
+**Reused under MIT — resolved.**

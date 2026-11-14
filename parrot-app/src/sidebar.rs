@@ -96,10 +96,16 @@ pub enum SidebarRow {
 /// The heading whose row carries the "+" new-item menu.
 pub const PROJECTS_HEADING: &str = "Projects";
 pub const FILTERS_HEADING: &str = "Filters";
+/// macOS-only heading for iCloud Drive projects (hidden elsewhere).
+pub const ICLOUD_HEADING: &str = "iCloud";
 
 /// Root rows: Library (the shelf), the smart filters, every project under PROJECTS, then the
 /// root-level saved filters under FILTERS when there are any. Sheets and sections live inside
 /// projects; anything else at the root (from a library predating that rule) lists last.
+///
+/// On macOS, iCloud-section projects list under their own ICLOUD heading so one
+/// library shows both stores; on other platforms everything lists under PROJECTS
+/// (iCloud UI is hidden there).
 pub fn root_rows(library: &Library) -> Vec<SidebarRow> {
     let mut rows = vec![SidebarRow::Shelf];
     rows.extend(SmartFilter::ALL.into_iter().map(SidebarRow::Smart));
@@ -110,16 +116,55 @@ pub fn root_rows(library: &Library) -> Vec<SidebarRow> {
     };
     let mut order: Vec<usize> = (0..library.children.len()).collect();
     order.sort_by_key(|i| (kind(i), *i));
-    rows.push(SidebarRow::Heading(PROJECTS_HEADING));
-    let mut filters_shown = false;
-    for i in order {
-        if kind(&i) == 1 && !filters_shown {
-            rows.push(SidebarRow::Heading(FILTERS_HEADING));
-            filters_shown = true;
+    #[cfg(target_os = "macos")]
+    {
+        let mut local: Vec<usize> = Vec::new();
+        let mut icloud: Vec<usize> = Vec::new();
+        let mut filters: Vec<usize> = Vec::new();
+        let mut other: Vec<usize> = Vec::new();
+        for i in order {
+            match &library.children[i] {
+                Node::Project(p) if p.section.is_icloud() => icloud.push(i),
+                Node::Project(_) => local.push(i),
+                Node::Filter(_) => filters.push(i),
+                _ => other.push(i),
+            }
         }
-        rows.push(SidebarRow::Node(vec![i]));
+        rows.push(SidebarRow::Heading(PROJECTS_HEADING));
+        for i in local {
+            rows.push(SidebarRow::Node(vec![i]));
+        }
+        // Always show the iCloud heading on macOS (even when empty) so there is
+        // a visible place to create the first iCloud project. Other platforms
+        // never show it.
+        rows.push(SidebarRow::Heading(ICLOUD_HEADING));
+        for i in icloud {
+            rows.push(SidebarRow::Node(vec![i]));
+        }
+        if !filters.is_empty() {
+            rows.push(SidebarRow::Heading(FILTERS_HEADING));
+            for i in filters {
+                rows.push(SidebarRow::Node(vec![i]));
+            }
+        }
+        for i in other {
+            rows.push(SidebarRow::Node(vec![i]));
+        }
+        rows
     }
-    rows
+    #[cfg(not(target_os = "macos"))]
+    {
+        rows.push(SidebarRow::Heading(PROJECTS_HEADING));
+        let mut filters_shown = false;
+        for i in order {
+            if kind(&i) == 1 && !filters_shown {
+                rows.push(SidebarRow::Heading(FILTERS_HEADING));
+                filters_shown = true;
+            }
+            rows.push(SidebarRow::Node(vec![i]));
+        }
+        rows
+    }
 }
 
 /// Every library node row in display order — root rows as [`root_rows`] orders them, each
@@ -207,6 +252,10 @@ pub enum ContextAction {
     GetInfo,
     /// Copies the project's folder path on disk to the clipboard.
     CopyFolderPath,
+    /// Moves a project to the iCloud section (macOS only; hidden elsewhere).
+    MoveToICloud,
+    /// Moves a project back to the local section (macOS only; hidden elsewhere).
+    MoveToLocal,
 }
 
 impl ContextAction {
@@ -225,11 +274,14 @@ impl ContextAction {
             ContextAction::UnmarkDraft => "Unmark as Draft",
             ContextAction::GetInfo => "Get Info",
             ContextAction::CopyFolderPath => "Copy Folder Path",
+            ContextAction::MoveToICloud => "Move to iCloud",
+            ContextAction::MoveToLocal => "Move to Local",
         }
     }
 
     /// The actions offered for `node`, in §3.4 order. Keywords/Export are sheet-only (the
     /// keyword and export models are per-sheet); a Filter can't carry a Goal.
+    /// iCloud moves are offered for projects only, and only on macOS.
     pub fn for_node(node: &Node) -> Vec<ContextAction> {
         use ContextAction::*;
         let mut actions = vec![
@@ -250,8 +302,20 @@ impl ContextAction {
             actions.push(EditKeywords);
             actions.push(if s.draft { UnmarkDraft } else { MarkDraft });
         }
-        if matches!(node, Node::Project(_)) {
+        if let Node::Project(p) = node {
             actions.push(CopyFolderPath);
+            #[cfg(target_os = "macos")]
+            {
+                actions.push(if p.section.is_icloud() {
+                    MoveToLocal
+                } else {
+                    MoveToICloud
+                });
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = p.section;
+            }
         }
         actions.push(GetInfo);
         actions
@@ -336,6 +400,18 @@ pub fn apply_context_action(
         }
         ContextAction::GetInfo => UiIntent::OpenInfo(path.to_vec()),
         ContextAction::CopyFolderPath => UiIntent::CopyFolderPath(path.to_vec()),
+        ContextAction::MoveToICloud => {
+            state.move_project_to_icloud(path)?;
+            // Persist the section change immediately so the project lands in
+            // the iCloud store; a later save would do it anyway.
+            let _ = state.save();
+            UiIntent::None
+        }
+        ContextAction::MoveToLocal => {
+            state.move_project_to_local(path)?;
+            let _ = state.save();
+            UiIntent::None
+        }
     })
 }
 
@@ -503,6 +579,16 @@ mod tests {
         assert_eq!(rows[0], SidebarRow::Shelf);
         assert_eq!(rows[1..4], SmartFilter::ALL.map(SidebarRow::Smart));
         assert_eq!(rows[4], SidebarRow::Heading(PROJECTS_HEADING));
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            rows[5..],
+            [
+                SidebarRow::Node(vec![0]),
+                SidebarRow::Node(vec![1]),
+                SidebarRow::Heading(ICLOUD_HEADING),
+            ]
+        );
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
             rows[5..],
             [SidebarRow::Node(vec![0]), SidebarRow::Node(vec![1])]
@@ -510,6 +596,28 @@ mod tests {
         assert!(!rows
             .iter()
             .any(|r| matches!(r, SidebarRow::Heading("Notes"))));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn root_rows_splits_icloud_projects() {
+        let mut state = AppState::new();
+        state.create_project("Local");
+        state.create_project_in_section("Cloud", parrot_core::Section::ICloud);
+        let rows = root_rows(&state.library);
+        assert_eq!(
+            rows,
+            vec![
+                SidebarRow::Shelf,
+                SidebarRow::Smart(SmartFilter::All),
+                SidebarRow::Smart(SmartFilter::LastSevenDays),
+                SidebarRow::Smart(SmartFilter::Trash),
+                SidebarRow::Heading(PROJECTS_HEADING),
+                SidebarRow::Node(vec![0]),
+                SidebarRow::Heading(ICLOUD_HEADING),
+                SidebarRow::Node(vec![1]),
+            ]
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ use parrot_core::Node;
 pub struct ShelfItem {
     pub path: NodePath,
     pub title: String,
+    pub section: parrot_core::Section,
     pub sheets: usize,
     pub drafts: usize,
     pub sections: usize,
@@ -49,6 +50,7 @@ pub fn items(state: &AppState) -> Vec<ShelfItem> {
             let mut item = ShelfItem {
                 path,
                 title: project.title.clone(),
+                section: project.section,
                 sheets: 0,
                 drafts: 0,
                 sections: 0,
