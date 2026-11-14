@@ -76,6 +76,39 @@ The UI's icons come from the Phosphor icon font (regular weight), embedded by th
 (© Phosphor Icons). No icon file is copied into this repository; the font ships inside the crate.
 **Reused under MIT — resolved.**
 
+## Spelling dictionaries: SCOWL en_US / en_GB flat word lists (no third-party code)
+
+The spellchecker (`parrot-app/src/spellcheck.rs`) is this repo's own code (MIT, like
+everything else here): checking is a hash-table lookup and suggestions are
+edit-distance candidates ranked by frequency band. The only third-party input is
+word-list *data*, vendored under `parrot-app/assets/dictionaries/` and embedded with
+`include_str!`, so checking works fully offline at runtime:
+
+- `en_US.txt`: shared English + American spellings, contractions and top-1000 names.
+- `en_GB.txt`: shared English + British (-ise) spellings, contractions and names.
+
+Both are generated from SCOWL 2020.12.07 (`http://wordlist.sourceforge.net`, size-60
+bands) by `scripts/generate_wordlists.py`, which also stamps each file with the
+provenance and the notice below. SCOWL's license requires the copyright and
+permission notices to appear in supporting documentation — this section is that
+documentation:
+
+  > Copyright 2000-2018 by Kevin Atkinson
+  >
+  > Permission to use, copy, modify, distribute and sell these word
+  > lists, the associated scripts, the output created from the scripts,
+  > and its documentation for any purpose is hereby granted without fee,
+  > provided that the above copyright notice appears in all copies and
+  > that both that copyright notice and this permission notice appear in
+  > supporting documentation. Kevin Atkinson makes no representations
+  > about the suitability of this array for any purpose. It is provided
+  > "as is" without express or implied warranty.
+
+No checker library is used (the earlier `spellbook`/MPL-2.0 dependency is gone) and
+no LGPL dictionary data is shipped (the earlier Marco A.G. Pinto `en_GB` files are
+gone, replaced by the same SCOWL family as `en_US`).
+
+**Both dictionaries vendored with attribution; crate tree MIT-only — resolved.**
 ## Export styles: Ariadne's built-in CSS (same author)
 
 The four manuscript-style CSS export themes in `parrot-app/src/export_styles.rs`

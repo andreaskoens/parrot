@@ -66,6 +66,7 @@ Deviations from the roadmap spec, with reasoning (roadmap §0 rule 4). Decisions
 | LIC-04 | 2026-10-30 | T-10-07 | Spelling uses an original common-word list, not a licensed dictionary. `is_known_word` is the swap point (e.g. `spellbook`) → RV-06. |
 | LIC-05 | 2026-11-02 | — | Character Counter reimplements charactercounttool.com's metric set from scratch. Dale-Chall's familiar-word list isn't bundled, so "difficult" means ≥ 3 syllables and not a grammar word, labeled "approx.". Syllables use a vowel-group heuristic. |
 | LIC-06 | 2026-11-02 | — | Icons come from Phosphor (`egui-phosphor` 0.7, MIT) via `icons.rs`; 10 earlier emoji rendered as boxes. Guarded by `scripts/check_icons.sh` and `icons::tests`. |
+| LIC-07 | 2026-11-13 | — | Crate tree back to MIT-only: the spellchecker's `spellbook` (MPL-2.0) dependency is replaced by an in-crate hash-lookup + edit-distance engine, and the LGPL `en_GB` Hunspell files by SCOWL-family flat word lists (same MIT-like terms as `en_US`). `scripts/generate_wordlists.py` regenerates `en_US.txt`/`en_GB.txt`. Supersedes LIC-04's swap-point note (word-list half of RV-06 now done; Grammar rule category still open). |
 
 ## Markup & data model
 

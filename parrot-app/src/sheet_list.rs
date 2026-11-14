@@ -4,10 +4,12 @@
 //! one after the other share one card ([`RunPosition`]).
 
 use crate::badges::{badges_for, Badge};
+use crate::personal_dictionary::PersonalDictionary;
 use crate::sidebar::{SidebarSelection, SmartFilter};
 use crate::state::{AppState, NodePath};
 use crate::tokens;
 use parrot_core::{Node, Sheet, SheetContent};
+use std::collections::BTreeSet;
 
 /// §4.2 placeholder for a sheet without a title, and the §4.2 footer for a container with no
 /// sheets (the confirmed `emptySheetLabel` outlet).
@@ -55,11 +57,25 @@ pub fn preview_snippet(content: &SheetContent) -> String {
         .join("\n")
 }
 
-pub fn row_for(path: NodePath, sheet: &Sheet, language: crate::language::Language) -> SheetRow {
+pub fn row_for(
+    path: NodePath,
+    sheet: &Sheet,
+    language: crate::language::Language,
+    personal: &PersonalDictionary,
+    dismissed: &BTreeSet<(NodePath, String)>,
+) -> SheetRow {
     let node = Node::Sheet(sheet.clone());
     let mut badges = badges_for(&node);
-    // The error dot (§4.2) uses the same checker as the editor's annotations (T-12-11).
-    if !crate::annotations::check_in(&sheet.content.plain_text(), language).is_empty() {
+    // The error dot (§4.2) uses the same checker as the editor's annotations (T-12-11),
+    // minus the findings dismissed this session.
+    let buffer = sheet.content.plain_text();
+    let findings = crate::annotations::without_dismissed(
+        &buffer,
+        &path,
+        crate::annotations::check_in(&buffer, language, personal),
+        dismissed,
+    );
+    if !findings.is_empty() {
         badges.push(Badge::Error);
     }
     SheetRow {
@@ -133,19 +149,27 @@ pub fn all_sheets(node: &Node, path: &NodePath) -> Vec<NodePath> {
 }
 
 pub fn rows(state: &AppState, paths: &[NodePath]) -> Vec<SheetRow> {
-    rows_with(state, paths, &|_| Default::default())
+    rows_with(state, paths, &|_| Default::default(), &BTreeSet::new())
 }
 
-/// [`rows`], with each sheet's error dot checked in the language `language_of` gives its path.
+/// [`rows`], with each sheet's error dot checked in the language `language_of` gives its path
+/// and minus `dismissed` (this session's dismissed `(path, fingerprint)` pairs).
 pub fn rows_with(
     state: &AppState,
     paths: &[NodePath],
     language_of: &dyn Fn(&NodePath) -> crate::language::Language,
+    dismissed: &BTreeSet<(NodePath, String)>,
 ) -> Vec<SheetRow> {
     let mut rows: Vec<SheetRow> = paths
         .iter()
         .filter_map(|p| match state.node(p) {
-            Ok(Node::Sheet(s)) => Some(row_for(p.clone(), s, language_of(p))),
+            Ok(Node::Sheet(s)) => Some(row_for(
+                p.clone(),
+                s,
+                language_of(p),
+                &state.personal_dictionary,
+                dismissed,
+            )),
             _ => None,
         })
         .collect();
@@ -271,6 +295,40 @@ mod tests {
         assert_eq!(rows[0].preview, projection[..2].join("\n"));
         assert_eq!(rows[0].preview, "First line of the body.\nSecond bold");
         assert_eq!(rows[0].title, "Finais");
+    }
+
+    #[test]
+    fn dismissed_findings_clear_the_error_dot() {
+        let mut state = fixture();
+        state.create_sheet(&[0], "Typo").expect("sheet");
+        let typo_at = vec![0, 1];
+        state
+            .set_sheet_content(&typo_at, SheetContent::new(vec![para("A graet day.")]))
+            .expect("content");
+        let language = crate::language::Language::default();
+        let rows = rows_with(
+            &state,
+            std::slice::from_ref(&typo_at),
+            &|_| language,
+            &BTreeSet::new(),
+        );
+        assert!(rows[0].badges.contains(&Badge::Error), "typo shows the dot");
+        // Dismiss the finding the same way the UI does, then the dot is gone.
+        let buffer = match state.node(&typo_at) {
+            Ok(Node::Sheet(s)) => s.content.plain_text(),
+            _ => panic!("typo sheet missing"),
+        };
+        let findings = crate::annotations::check_in(&buffer, language, &state.personal_dictionary);
+        assert_eq!(findings.len(), 1);
+        let mut dismissed = BTreeSet::new();
+        for a in &findings {
+            dismissed.insert((typo_at.clone(), crate::annotations::fingerprint(&buffer, a)));
+        }
+        let rows = rows_with(&state, &[typo_at], &|_| language, &dismissed);
+        assert!(
+            !rows[0].badges.contains(&Badge::Error),
+            "dismissed findings clear the dot"
+        );
     }
 
     #[test]

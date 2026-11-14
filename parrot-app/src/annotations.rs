@@ -4,8 +4,10 @@
 //! dot.
 
 use crate::language::Language;
+use crate::personal_dictionary::PersonalDictionary;
 use crate::tokens;
 use egui::Color32;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnotationKind {
@@ -34,14 +36,14 @@ pub fn annotation_color(kind: AnnotationKind) -> Color32 {
 
 /// Every finding in `text` (English), ordered by position (spelling first on ties).
 pub fn check(text: &str) -> Vec<Annotation> {
-    check_in(text, Language::default())
+    check_in(text, Language::default(), &PersonalDictionary::default())
 }
 
-/// [`check`] for a project's language. Spelling needs a word list, so it only runs for
-/// languages that have one.
-pub fn check_in(text: &str, language: Language) -> Vec<Annotation> {
+/// [`check`] for a project's language and personal dictionary. Spelling needs a word
+/// list, so it only runs for languages that have one; personal words pass regardless.
+pub fn check_in(text: &str, language: Language, personal: &PersonalDictionary) -> Vec<Annotation> {
     let spelling = if language.has_dictionary() {
-        crate::spellcheck::check(text)
+        crate::spellcheck::check_in(text, language, personal)
     } else {
         Vec::new()
     };
@@ -91,6 +93,30 @@ pub fn context(
     )
 }
 
+/// Stable identity of a finding that survives edits elsewhere in the sheet: the card
+/// title plus the finding with a little context either side, so editing the text
+/// invalidates the dismissal.
+pub fn fingerprint(buffer: &str, a: &Annotation) -> String {
+    let (before, span, after) = context(buffer, &a.byte_range, 12);
+    format!("{}|{before}|{span}|{after}", a.title)
+}
+
+/// Drops the findings the user already dismissed this session, stored as `(path,
+/// fingerprint)` pairs. Everything that shows findings — editor underlines, the sheet
+/// list's error dot, the proofing tab — filters through here, so a dismissal clears
+/// everywhere at once until the text changes.
+pub fn without_dismissed(
+    buffer: &str,
+    path: &[usize],
+    findings: Vec<Annotation>,
+    dismissed: &BTreeSet<(Vec<usize>, String)>,
+) -> Vec<Annotation> {
+    findings
+        .into_iter()
+        .filter(|a| !dismissed.contains(&(path.to_vec(), fingerprint(buffer, a))))
+        .collect()
+}
+
 /// The index of the paragraph (as [`crate::editor::paragraph_spans`] counts them) holding
 /// `byte` in `text` — what a finding's click-to-jump scrolls to.
 pub fn paragraph_of(text: &str, byte: usize) -> usize {
@@ -121,7 +147,11 @@ mod tests {
 
     #[test]
     fn non_english_skips_spelling() {
-        let found = check_in("Der qwzx Hund.", Language::German);
+        let found = check_in(
+            "Der qwzx Hund.",
+            Language::German,
+            &PersonalDictionary::default(),
+        );
         assert!(found.iter().all(|a| a.kind == AnnotationKind::Grammar));
     }
 
@@ -170,5 +200,21 @@ mod tests {
         let mut sorted = starts.clone();
         sorted.sort_unstable();
         assert_eq!(starts, sorted);
+    }
+
+    #[test]
+    fn personal_words_suppress_spelling_findings() {
+        let mut personal = PersonalDictionary::default();
+        personal.add("Affini");
+        let found = check_in("The Affini are here.", Language::default(), &personal);
+        assert!(found.iter().all(|a| a.kind == AnnotationKind::Grammar));
+        let found = check_in(
+            "The Affini are here.",
+            Language::default(),
+            &PersonalDictionary::default(),
+        );
+        assert!(found
+            .iter()
+            .any(|a| { a.kind == AnnotationKind::Spelling && a.message.contains("Affini") }));
     }
 }

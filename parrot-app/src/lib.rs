@@ -26,6 +26,7 @@ pub mod language;
 pub mod layout;
 pub mod markdown_blocks;
 pub mod os;
+pub mod personal_dictionary;
 pub mod preferences;
 pub mod recent_library;
 pub mod render;
