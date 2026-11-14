@@ -16,6 +16,7 @@ pub mod first_run;
 pub mod focus_mode;
 pub mod goal_ui;
 pub mod grammar;
+pub mod icloud;
 pub mod icons;
 pub mod import_ui;
 pub mod inspector;

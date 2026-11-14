@@ -50,6 +50,9 @@ pub type NodePath = Vec<usize>;
 pub struct AppState {
     pub library: Library,
     pub library_path: Option<PathBuf>,
+    /// Separate iCloud library root (`~/Library/Mobile Documents/.../Parrot`
+    /// on macOS). `None` on Windows/Linux or when iCloud Drive is off.
+    pub icloud_path: Option<PathBuf>,
     /// Writing-activity series (T-10-10) across the whole library. `day` is an opaque session
     /// counter this app bumps itself (`start_new_day`) — there's no real calendar source here
     /// (no `chrono` dependency), see `parrot_core::statistics`'s own doc.
@@ -158,6 +161,8 @@ impl AppState {
 
     /// Loads an existing library tree from `path` (feature inventory §2, via parrot-container).
     /// Returns whether loose sheets/sections had to be moved into an Unfiled project.
+    /// When `icloud_path` is set, iCloud projects stored there are unioned in too
+    /// (their `section` is forced to `ICloud` — location is authoritative).
     pub fn open_library(
         &mut self,
         path: &Path,
@@ -165,7 +170,109 @@ impl AppState {
         self.library = parrot_container::tree::open_library(path)?;
         self.library_path = Some(path.to_path_buf());
         self.trash.clear();
-        Ok(self.adopt_loose_nodes())
+        let mut adopted = self.adopt_loose_nodes();
+        if let Some(icloud) = self.icloud_path.clone() {
+            if icloud != path {
+                if let Ok(added) = self.load_icloud_projects(&icloud) {
+                    adopted |= added;
+                }
+            }
+        }
+        Ok(adopted)
+    }
+
+    /// Loads iCloud-section projects from `icloud_root` and appends them.
+    /// Missing folder = no iCloud projects yet, not an error for callers that
+    /// care (`open_library` ignores the error; Settings surfaces it).
+    pub fn load_icloud_projects(
+        &mut self,
+        icloud_root: &Path,
+    ) -> Result<bool, parrot_container::tree::TreeIoError> {
+        if !icloud_root.is_dir() {
+            return Ok(false);
+        }
+        let remote = parrot_container::tree::open_library(icloud_root)?;
+        let mut added = false;
+        for node in remote.children {
+            match node {
+                Node::Project(mut p) => {
+                    p.section = parrot_core::Section::ICloud;
+                    self.library.children.push(Node::Project(p));
+                    added = true;
+                }
+                // Filters are global: keep the local set, skip remote ones.
+                Node::Filter(_) => {}
+                // A bare sheet/section in the iCloud store (hand-copied in):
+                // adopt it under an Unfiled iCloud project.
+                Node::Sheet(_) | Node::Group(_) => {
+                    let target = self.unfiled_icloud_project();
+                    if let Ok(Node::Project(p)) = self.node_mut(&target) {
+                        p.children.push(node);
+                        added = true;
+                    }
+                }
+            }
+        }
+        Ok(added)
+    }
+
+    fn unfiled_icloud_project(&mut self) -> NodePath {
+        for (i, child) in self.library.children.iter().enumerate() {
+            if let Node::Project(p) = child {
+                if p.title == UNFILED_PROJECT_TITLE && p.section.is_icloud() {
+                    return vec![i];
+                }
+            }
+        }
+        self.create_project_in_section(UNFILED_PROJECT_TITLE, parrot_core::Section::ICloud)
+    }
+
+    /// The iCloud-section projects, in library order.
+    pub fn icloud_projects(&self) -> Vec<NodePath> {
+        self.library
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| matches!(n, Node::Project(p) if p.section.is_icloud()))
+            .map(|(i, _)| vec![i])
+            .collect()
+    }
+
+    /// The local-section projects, in library order.
+    pub fn local_projects(&self) -> Vec<NodePath> {
+        self.library
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| {
+                matches!(n, Node::Project(p) if !p.section.is_icloud())
+                    || matches!(n, Node::Filter(_))
+            })
+            .map(|(i, _)| vec![i])
+            .collect()
+    }
+
+    /// Moves the project at `path` to the iCloud section (stays in place in
+    /// the tree; `save` writes it to the iCloud store).
+    pub fn move_project_to_icloud(&mut self, path: &[usize]) -> Result<(), StateError> {
+        match self.node_mut(path)? {
+            Node::Project(p) => {
+                p.section = parrot_core::Section::ICloud;
+                Ok(())
+            }
+            _ => Err(StateError::NotAProject),
+        }
+    }
+
+    /// Moves the project at `path` back to the local section.
+    pub fn move_project_to_local(&mut self, path: &[usize]) -> Result<(), StateError> {
+        match self.node_mut(path)? {
+            Node::Project(p) => {
+                p.section = parrot_core::Section::Local;
+                Ok(())
+            }
+            _ => Err(StateError::NotAProject),
+        }
     }
 
     /// Moves sheets and sections sitting at the library root (libraries written before
@@ -184,17 +291,28 @@ impl AppState {
             children: loose,
             goal: None,
             language: None,
+            section: parrot_core::Section::Local,
         }));
         true
     }
 
     /// Adds a new, empty project at the end of the library root.
     pub fn create_project(&mut self, title: &str) -> NodePath {
+        self.create_project_in_section(title, parrot_core::Section::Local)
+    }
+
+    /// Adds a new, empty project in `section` at the end of the library root.
+    pub fn create_project_in_section(
+        &mut self,
+        title: &str,
+        section: parrot_core::Section,
+    ) -> NodePath {
         self.library.children.push(Node::Project(Project {
             title: title.to_string(),
             children: Vec::new(),
             goal: None,
             language: None,
+            section,
         }));
         vec![self.library.children.len() - 1]
     }
@@ -229,19 +347,101 @@ impl AppState {
 
     /// The folder the node at `path` is stored in under the library folder, as of the next
     /// save. `None` without a library folder or for a node that isn't stored (filters).
+    /// iCloud-section projects resolve under the iCloud store; everything else
+    /// under the local library folder.
     pub fn node_folder(&self, path: &[usize]) -> Option<PathBuf> {
-        let root = self.library_path.as_ref()?;
-        parrot_container::tree::node_disk_path(root, &self.library, path)
+        let section = match self.node(path).ok()? {
+            Node::Project(p) => Some(p.section),
+            _ => self
+                .project_of(path)
+                .and_then(|pp| match self.node(&pp).ok()? {
+                    Node::Project(p) => Some(p.section),
+                    _ => None,
+                }),
+        };
+        let root = if section == Some(parrot_core::Section::ICloud) {
+            self.icloud_path.as_ref().or(self.library_path.as_ref())?
+        } else {
+            self.library_path.as_ref()?
+        };
+        // Partitioned save keeps each section in its own root, so resolve the
+        // disk path against a section-filtered view of the tree.
+        let view = self.section_view(section.unwrap_or(parrot_core::Section::Local));
+        let mut index_map: Vec<usize> = Vec::new();
+        for (i, child) in self.library.children.iter().enumerate() {
+            let keep = match child {
+                Node::Project(p) => p.section == section.unwrap_or(parrot_core::Section::Local),
+                Node::Filter(_) => section == Some(parrot_core::Section::Local),
+                _ => false,
+            };
+            if keep {
+                index_map.push(i);
+            }
+        }
+        let local_index = index_map
+            .iter()
+            .position(|&i| Some(i) == path.first().copied())?;
+        let mut view_path = vec![local_index];
+        view_path.extend_from_slice(&path[1..]);
+        parrot_container::tree::node_disk_path(root, &view, &view_path)
     }
 
-    /// Persists the current in-memory tree to `library_path`.
+    /// A filtered `Library` holding only one section's projects (plus filters
+    /// for the local view, which is where filters live).
+    fn section_view(&self, section: parrot_core::Section) -> Library {
+        Library {
+            children: self
+                .library
+                .children
+                .iter()
+                .filter(|n| match n {
+                    Node::Project(p) => p.section == section,
+                    Node::Filter(_) => section == parrot_core::Section::Local,
+                    _ => false,
+                })
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Persists the current in-memory tree. Local projects go to `library_path`;
+    /// iCloud projects go to `icloud_path` when set, else alongside local so
+    /// nothing is lost on machines without iCloud Drive.
     pub fn save(&self) -> Result<(), StateError> {
-        let path = self
+        let local_path = self
             .library_path
             .as_ref()
             .ok_or(StateError::NoLibraryPath)?;
-        parrot_container::tree::save_library(path, &self.library)
-            .map_err(|e| StateError::Io(e.to_string()))
+        // The iCloud store opened directly as the library: one root holds both
+        // sections, so save the merged tree once instead of partitioning a
+        // store against itself (which would set the other half aside).
+        if self.icloud_path.as_ref() == Some(local_path) {
+            return parrot_container::tree::save_library(local_path, &self.library)
+                .map_err(|e| StateError::Io(e.to_string()));
+        }
+        let local_view = self.section_view(parrot_core::Section::Local);
+        parrot_container::tree::save_library(local_path, &local_view)
+            .map_err(|e| StateError::Io(e.to_string()))?;
+        let icloud_view = self.section_view(parrot_core::Section::ICloud);
+        let has_icloud = icloud_view
+            .children
+            .iter()
+            .any(|n| matches!(n, Node::Project(_)));
+        if let Some(icloud_path) = self.icloud_path.as_ref() {
+            if has_icloud || icloud_path.is_dir() {
+                parrot_container::tree::save_library(icloud_path, &icloud_view)
+                    .map_err(|e| StateError::Io(e.to_string()))?;
+            }
+        } else if has_icloud {
+            // No iCloud store configured: keep iCloud-section projects in the
+            // local folder (with `section=icloud` in their meta) so a later
+            // move to iCloud Drive can pick them up.
+            let mut merged = local_view;
+            merged.children.extend(icloud_view.children);
+            parrot_container::tree::save_library(local_path, &merged)
+                .map_err(|e| StateError::Io(e.to_string()))?;
+        }
+        Ok(())
     }
 
     pub fn create_group(&mut self, parent: &[usize], title: &str) -> Result<(), StateError> {
@@ -769,6 +969,7 @@ mod tests {
                 children: Vec::new(),
                 goal: None,
                 language: None,
+                section: parrot_core::Section::Local,
             }),
             Node::Sheet(Sheet {
                 title: "Loose".to_string(),
@@ -1040,5 +1241,69 @@ mod tests {
         assert_eq!(glued_titles(&state), ["C", "+C", "+B", "D"]);
         state.restore_from_trash(0, Some(&[0])).expect("restore");
         assert_eq!(glued_titles(&state).last().map(String::as_str), Some("A"));
+    }
+
+    #[test]
+    fn icloud_projects_save_to_their_own_store_and_reload() {
+        let local = tempfile::tempdir().expect("tempdir");
+        let icloud = tempfile::tempdir().expect("tempdir");
+        let mut state = AppState::new();
+        state.library_path = Some(local.path().to_path_buf());
+        state.icloud_path = Some(icloud.path().to_path_buf());
+        state.create_project("Local Novel");
+        state.create_project_in_section("iCloud Novel", parrot_core::Section::ICloud);
+        state.create_sheet(&[0], "A").expect("sheet");
+        state.create_sheet(&[1], "B").expect("sheet");
+        state.save().expect("save");
+        assert!(
+            local.path().join("Local Novel.ulproject").is_dir(),
+            "local project in the local store"
+        );
+        assert!(
+            icloud.path().join("iCloud Novel.ulproject").is_dir(),
+            "icloud project in the icloud store"
+        );
+        assert!(
+            !local.path().join("iCloud Novel.ulproject").exists(),
+            "icloud project not duplicated locally"
+        );
+
+        let mut reopened = AppState::new();
+        reopened.library_path = Some(local.path().to_path_buf());
+        reopened.icloud_path = Some(icloud.path().to_path_buf());
+        reopened.open_library(local.path()).expect("open combined");
+        assert_eq!(titles(&reopened, &[]), ["Local Novel", "iCloud Novel"]);
+        assert_eq!(reopened.icloud_projects(), vec![vec![1]]);
+        assert!(
+            matches!(
+                reopened.node(&[1]),
+                Ok(Node::Project(p)) if p.section.is_icloud()
+            ),
+            "reloaded iCloud project keeps its section"
+        );
+    }
+
+    #[test]
+    fn moving_a_project_between_sections_rewrites_its_store() {
+        let local = tempfile::tempdir().expect("tempdir");
+        let icloud = tempfile::tempdir().expect("tempdir");
+        let mut state = AppState::new();
+        state.library_path = Some(local.path().to_path_buf());
+        state.icloud_path = Some(icloud.path().to_path_buf());
+        state.create_project("Nomad");
+        state.save().expect("save");
+        assert!(local.path().join("Nomad.ulproject").is_dir());
+        state.move_project_to_icloud(&[0]).expect("move to icloud");
+        state.save().expect("save");
+        assert!(
+            icloud.path().join("Nomad.ulproject").is_dir(),
+            "project lands in the icloud store after the move"
+        );
+        state.move_project_to_local(&[0]).expect("move back");
+        state.save().expect("save");
+        assert!(
+            local.path().join("Nomad.ulproject").is_dir(),
+            "project returns to the local store"
+        );
     }
 }

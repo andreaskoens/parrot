@@ -15,5 +15,5 @@ pub use ast::{Inline, MarkupInfo, Paragraph, SheetContent, TagKind, TagMark};
 pub use attachment::Attachment;
 pub use filter::{DateRange, Filter, NodeKindMatch};
 pub use goal::{DailySession, Goal, GoalCounter, GoalKind, GoalProgress};
-pub use node::{Group, Library, Node, Project, Sheet};
+pub use node::{Group, Library, Node, Project, Section, Sheet};
 pub use statistics::{ActivityPoint, ActivityTracker};

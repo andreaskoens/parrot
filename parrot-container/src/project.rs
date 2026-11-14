@@ -12,7 +12,7 @@ use std::path::Path;
 /// Saves a `.ulproject` directory package at `path`.
 pub fn save(path: &Path, project: &Project) -> Result<(), TreeIoError> {
     fs::create_dir_all(path)?;
-    tree::write_project_meta(path, project.language.as_deref())?;
+    tree::write_project_meta(path, project.language.as_deref(), project.section)?;
     tree::save_children(path, &project.children, path)
 }
 
@@ -26,6 +26,7 @@ pub fn open(path: &Path, title: &str) -> Result<Project, TreeIoError> {
         // DECISIONS.md), same deferred-persistence pattern as filter.rs's `.ulfilter` note.
         goal: None,
         language: tree::read_project_meta(path),
+        section: tree::read_project_section(path),
     })
 }
 
@@ -73,6 +74,7 @@ mod tests {
                 }),
             ],
             goal: None,
+            section: parrot_core::Section::Local,
         };
 
         save(&path, &project).expect("save must succeed");

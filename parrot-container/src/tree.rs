@@ -15,7 +15,7 @@
 //! are listed the same way in `.draft`. Each sidecar is omitted when it would be empty.
 
 use crate::sheet::{self, SheetIoError};
-use parrot_core::{Group, Library, Node, Project, Sheet};
+use parrot_core::{Group, Library, Node, Project, Section, Sheet};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -204,7 +204,7 @@ pub(crate) fn save_children(dir: &Path, children: &[Node], root: &Path) -> Resul
             Node::Project(p) => {
                 let path = unique(&p.title, PROJECT_SUFFIX);
                 fs::create_dir_all(&path)?;
-                write_project_meta(&path, p.language.as_deref())?;
+                write_project_meta(&path, p.language.as_deref(), p.section)?;
                 save_children(&path, &p.children, root)?;
             }
             Node::Filter(_) => {}
@@ -229,14 +229,28 @@ pub(crate) fn save_children(dir: &Path, children: &[Node], root: &Path) -> Resul
 const PROJECT_META_FILE: &str = ".project-meta";
 
 /// Writes the project's meta file in `dir`, or removes it when there is nothing to store.
-pub(crate) fn write_project_meta(dir: &Path, language: Option<&str>) -> Result<(), TreeIoError> {
+/// `section=icloud` is written for iCloud projects; local is the default and writes no
+/// section line so old libraries stay byte-identical.
+pub(crate) fn write_project_meta(
+    dir: &Path,
+    language: Option<&str>,
+    section: Section,
+) -> Result<(), TreeIoError> {
     let path = dir.join(PROJECT_META_FILE);
-    match language.filter(|l| !l.trim().is_empty()) {
-        Some(l) => fs::write(path, format!("language={}\n", l.trim()))?,
-        None => match fs::remove_file(path) {
+    let mut lines = Vec::new();
+    if let Some(l) = language.filter(|l| !l.trim().is_empty()) {
+        lines.push(format!("language={}\n", l.trim()));
+    }
+    if section.is_icloud() {
+        lines.push("section=icloud\n".to_string());
+    }
+    if lines.is_empty() {
+        match fs::remove_file(&path) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
             _ => {}
-        },
+        }
+    } else {
+        fs::write(path, lines.concat())?;
     }
     Ok(())
 }
@@ -248,6 +262,17 @@ pub(crate) fn read_project_meta(dir: &Path) -> Option<String> {
         .find_map(|l| l.strip_prefix("language="))
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
+}
+
+/// The project's stored section; missing (old libraries) means `Local`.
+pub(crate) fn read_project_section(dir: &Path) -> Section {
+    let Ok(text) = fs::read_to_string(dir.join(PROJECT_META_FILE)) else {
+        return Section::Local;
+    };
+    text.lines()
+        .find_map(|l| l.strip_prefix("section="))
+        .map(Section::from_label)
+        .unwrap_or(Section::Local)
 }
 
 /// Writes `names` one per line to the sidecar at `path`, or removes it when there are none.
@@ -342,6 +367,7 @@ pub(crate) fn open_children(dir: &Path) -> Result<Vec<Node>, TreeIoError> {
                 children: grandchildren,
                 goal: None,
                 language: read_project_meta(&path),
+                section: read_project_section(&path),
             }));
         }
         // Anything else (Thumbs.db, desktop.ini, a stray note) isn't a node: skip it rather
@@ -361,6 +387,7 @@ mod tests {
                 children: Vec::new(),
                 goal: None,
                 language: None,
+                section: Section::Local,
             })
         };
         let library = Library {
@@ -610,5 +637,41 @@ mod tests {
         assert!(has_library_entries(dir.path()));
         let empty = tempfile::tempdir().expect("tempdir");
         assert!(!has_library_entries(empty.path()));
+    }
+
+    #[test]
+    fn project_section_survives_a_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let library = Library {
+            children: vec![
+                Node::Project(Project {
+                    title: "Local".to_string(),
+                    children: Vec::new(),
+                    goal: None,
+                    language: None,
+                    section: Section::Local,
+                }),
+                Node::Project(Project {
+                    title: "Cloud".to_string(),
+                    children: Vec::new(),
+                    goal: None,
+                    language: Some("en-US".to_string()),
+                    section: Section::ICloud,
+                }),
+            ],
+        };
+        save_library(dir.path(), &library).expect("save");
+        // Local writes no section line (old libraries stay byte-identical);
+        // iCloud writes `section=icloud` alongside the language.
+        let local_meta =
+            fs::read_to_string(dir.path().join("Local.ulproject").join(".project-meta"))
+                .unwrap_or_default();
+        assert!(!local_meta.contains("section"), "local is the default");
+        let cloud_meta =
+            fs::read_to_string(dir.path().join("Cloud.ulproject").join(".project-meta"))
+                .expect("icloud meta");
+        assert!(cloud_meta.contains("section=icloud"));
+        assert!(cloud_meta.contains("language=en-US"));
+        assert_eq!(open_library(dir.path()).expect("open"), library);
     }
 }
