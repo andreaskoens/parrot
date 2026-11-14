@@ -1,0 +1,98 @@
+# Release builds for manual testing (e.g. the Google Drive OAuth flow, whose
+# client ID/secret exist only as repo Actions secrets).
+#
+# Trigger: workflow_dispatch only, run on upstream `main`. Fork PR runs never
+# receive secrets, so this workflow intentionally has no pull_request trigger.
+# Secrets are passed as step env (never echoed; GitHub masks them in logs) so
+# `option_env!` bakes them in at compile time. Binaries ship as run artifacts.
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    name: gate (fmt, clippy, tests, guards)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux GUI link dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends
+          build-essential pkg-config
+          libxkbcommon-dev libgl1-mesa-dev libwayland-dev libx11-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Project checks
+        run: scripts/check.sh
+
+  build-macos:
+    name: build macOS (aarch64)
+    needs: gate
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Release build
+        run: cargo build --release -p parrot-app
+      - name: Package
+        run: |
+          VERSION="$(grep -A5 '^\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | cut -d'"' -f2)"
+          mkdir -p dist
+          cp target/release/parrot-app "dist/parrot-app-v${VERSION}-macos-aarch64"
+          chmod +x "dist/parrot-app-v${VERSION}-macos-aarch64"
+          cd dist && zip "parrot-macos-aarch64-v${VERSION}.zip" "parrot-app-v${VERSION}-macos-aarch64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parrot-macos-aarch64
+          path: dist/parrot-macos-aarch64-*.zip
+          retention-days: 30
+
+  build-windows:
+    name: build Windows (x86_64)
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Package portable zip
+        shell: bash
+        run: scripts/package_windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parrot-windows-portable
+          path: dist/*.zip
+          retention-days: 30
