@@ -34,6 +34,36 @@ pub struct Group {
     pub goal: Option<Goal>,
 }
 
+/// Where a project lives: on this Mac only, or in iCloud Drive so it
+/// syncs between Macs. Single-library model: one logical `Library` holds
+/// both sections; each section is stored in its own folder on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Section {
+    #[default]
+    Local,
+    ICloud,
+}
+
+impl Section {
+    pub fn is_icloud(self) -> bool {
+        matches!(self, Section::ICloud)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Section::Local => "local",
+            Section::ICloud => "icloud",
+        }
+    }
+
+    pub fn from_label(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "icloud" | "icloud drive" | "cloud" => Section::ICloud,
+            _ => Section::Local,
+        }
+    }
+}
+
 /// A workspace unit above groups (`ULProject`). Directory-package convention per Decision D2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
@@ -43,6 +73,9 @@ pub struct Project {
     /// Proofing language code (e.g. `en-US`, `de`), persisted in the project's `.project-meta`
     /// file. `None` = the app default. Opaque to this crate.
     pub language: Option<String>,
+    /// Which store this project is saved in. Persisted in `.project-meta` as
+    /// `section=icloud|local`; missing (old libraries) means `Local`.
+    pub section: Section,
 }
 
 /// A node in the library tree (`ULContainer`'s concrete variants).

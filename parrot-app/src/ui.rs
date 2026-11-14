@@ -465,6 +465,9 @@ pub struct ParrotApp {
     last_export_path: Option<PathBuf>,
     /// Where the last opened library is remembered for the next launch; `None` in tests.
     recent_library_file: Option<PathBuf>,
+    /// Where the last iCloud library root is remembered (macOS only); `None` in tests.
+    #[allow(dead_code)]
+    recent_icloud_file: Option<PathBuf>,
     counter: CounterUi,
 }
 
@@ -526,6 +529,7 @@ impl Default for ParrotApp {
             os: Box::new(NativeOs),
             last_export_path: None,
             recent_library_file: None,
+            recent_icloud_file: None,
             counter: CounterUi::default(),
         }
     }
@@ -543,14 +547,58 @@ impl ParrotApp {
         let mut app = Self {
             fonts_ready: true,
             recent_library_file: crate::recent_library::default_file(),
+            recent_icloud_file: crate::recent_library::default_icloud_file(),
             ..Self::default()
         };
+        app.init_icloud_path();
         app.reopen_last_library();
         app
     }
 
+    /// Points `state.icloud_path` at the remembered iCloud root, else the
+    /// default `~/.../CloudDocs/Parrot` when iCloud Drive is available.
+    /// Non-macOS builds leave it `None` so all iCloud UI stays hidden.
+    fn init_icloud_path(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            let remembered = self
+                .recent_icloud_file
+                .as_deref()
+                .and_then(crate::recent_library::recall_icloud);
+            let resolved = remembered.or_else(crate::icloud::default_icloud_library_dir);
+            self.state.icloud_path = resolved;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.state.icloud_path = None;
+        }
+    }
+
     /// Opens the library open when the app last ran, if it's still there.
     fn reopen_last_library(&mut self) {
+        // On macOS the remembered iCloud root wins when the local recall is
+        // gone: the iCloud store is the library there.
+        #[cfg(target_os = "macos")]
+        {
+            if self
+                .recent_library_file
+                .as_deref()
+                .and_then(crate::recent_library::recall)
+                .is_none()
+            {
+                if let Some(icloud) = self
+                    .recent_icloud_file
+                    .as_deref()
+                    .and_then(crate::recent_library::recall_icloud)
+                {
+                    if parrot_container::tree::has_library_entries(&icloud) {
+                        self.library_path_input = icloud.display().to_string();
+                        self.open_library();
+                        return;
+                    }
+                }
+            }
+        }
         let last = self
             .recent_library_file
             .as_deref()
@@ -566,6 +614,10 @@ impl ParrotApp {
         if let (Some(file), Some(library)) = (&self.recent_library_file, &self.state.library_path) {
             // Best effort: failing to remember shouldn't fail the open itself.
             let _ = crate::recent_library::remember(file, library);
+        }
+        #[cfg(target_os = "macos")]
+        if let (Some(file), Some(icloud)) = (&self.recent_icloud_file, &self.state.icloud_path) {
+            let _ = crate::recent_library::remember(file, icloud);
         }
     }
 
@@ -670,7 +722,22 @@ impl ParrotApp {
 
     /// Creates a project, opens it and starts renaming it.
     fn new_project(&mut self) {
-        let path = self.state.create_project(sidebar::NEW_PROJECT_TITLE);
+        self.new_project_in_section(parrot_core::Section::Local);
+    }
+
+    /// Creates a project in `section`, opens it and starts renaming it.
+    /// On non-macOS builds `ICloud` falls back to `Local` (iCloud UI hidden).
+    fn new_project_in_section(&mut self, section: parrot_core::Section) {
+        #[cfg(not(target_os = "macos"))]
+        let section = {
+            let _ = section;
+            parrot_core::Section::Local
+        };
+        let path = self
+            .state
+            .create_project_in_section(sidebar::NEW_PROJECT_TITLE, section);
+        // Persist immediately so a new iCloud project creates the iCloud store.
+        let _ = self.state.save();
         self.open_project(path.clone());
         self.handle_intent(UiIntent::BeginRename(path));
     }
@@ -1258,6 +1325,8 @@ impl ParrotApp {
                 | ContextAction::NewSheet
                 | ContextAction::Duplicate
                 | ContextAction::MoveToTrash
+                | ContextAction::MoveToICloud
+                | ContextAction::MoveToLocal
         );
         match sidebar::apply_context_action(&mut self.state, path, action) {
             Ok(intent) => {
@@ -1940,7 +2009,13 @@ impl ParrotApp {
                                 ));
                                 if label == sidebar::PROJECTS_HEADING {
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        self.add_menu(ui);
+                                        self.add_menu(ui, parrot_core::Section::Local);
+                                    });
+                                }
+                                #[cfg(target_os = "macos")]
+                                if label == sidebar::ICLOUD_HEADING {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        self.add_menu(ui, parrot_core::Section::ICloud);
                                     });
                                 }
                             });
@@ -1965,13 +2040,17 @@ impl ParrotApp {
 
     /// The "+" beside the PROJECTS heading: a new project, or a section, sheet or filter in
     /// the current project.
-    fn add_menu(&mut self, ui: &mut Ui) {
+    fn add_menu(&mut self, ui: &mut Ui, section: parrot_core::Section) {
         let in_project = self.creation_parent().is_some();
+        let new_project_label = match section {
+            parrot_core::Section::ICloud => "New iCloud Project",
+            parrot_core::Section::Local => "New Project",
+        };
         ui.menu_button(
             text(icons::ADD, tokens::UI_LABEL, tokens::TEXT_SECONDARY),
             |ui| {
-                if ui.button("New Project").clicked() {
-                    self.new_project();
+                if ui.button(new_project_label).clicked() {
+                    self.new_project_in_section(section);
                     ui.close_menu();
                 }
                 ui.separator();
@@ -2512,11 +2591,19 @@ impl ParrotApp {
     }
 
     /// The Library shelf: every project as a book-like card; clicking one goes into it.
+    /// On macOS the cards group under local and iCloud headings so the separate
+    /// iCloud library is visible on the landing page too.
     fn shelf(&mut self, ui: &mut Ui) {
         let items = crate::shelf::items(&self.state);
+        #[cfg(target_os = "macos")]
+        let show_sections = true;
+        #[cfg(not(target_os = "macos"))]
+        let show_sections = false;
         let mut open = None;
         let mut action = None;
-        let mut create = false;
+        let mut create_local = false;
+        #[cfg(target_os = "macos")]
+        let mut create_icloud = false;
         egui::ScrollArea::vertical()
             .id_salt("shelf")
             .auto_shrink([false, false])
@@ -2541,38 +2628,111 @@ impl ParrotApp {
                             tokens::TEXT_TERTIARY,
                         ));
                         ui.add_space(6.0 * tokens::GRID);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing =
-                                egui::vec2(6.0 * tokens::GRID, 6.0 * tokens::GRID);
-                            for item in &items {
-                                let response = shelf_card(ui, item);
-                                if response.clicked() {
-                                    open = Some(item.path.clone());
-                                }
-                                response.context_menu(|ui| {
-                                    if let Ok(node) = self.state.node(&item.path) {
-                                        for a in ContextAction::for_node(node) {
-                                            if ui.button(a.label()).clicked() {
-                                                action = Some((item.path.clone(), a));
-                                                ui.close_menu();
+                        if show_sections {
+                            #[allow(clippy::single_match)]
+                            match self.shelf_section(
+                                ui,
+                                &items,
+                                parrot_core::Section::Local,
+                                "Projects",
+                                &mut open,
+                                &mut action,
+                            ) {
+                                true => create_local = true,
+                                false => {}
+                            }
+                            #[cfg(target_os = "macos")]
+                            if self.shelf_section(
+                                ui,
+                                &items,
+                                parrot_core::Section::ICloud,
+                                "iCloud",
+                                &mut open,
+                                &mut action,
+                            ) {
+                                create_icloud = true;
+                            }
+                        } else {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing =
+                                    egui::vec2(6.0 * tokens::GRID, 6.0 * tokens::GRID);
+                                for item in &items {
+                                    let response = shelf_card(ui, item);
+                                    if response.clicked() {
+                                        open = Some(item.path.clone());
+                                    }
+                                    response.context_menu(|ui| {
+                                        if let Ok(node) = self.state.node(&item.path) {
+                                            for a in ContextAction::for_node(node) {
+                                                if ui.button(a.label()).clicked() {
+                                                    action = Some((item.path.clone(), a));
+                                                    ui.close_menu();
+                                                }
                                             }
                                         }
-                                    }
-                                });
-                            }
-                            if new_project_card(ui).clicked() {
-                                create = true;
-                            }
-                        });
+                                    });
+                                }
+                                if new_project_card(ui).clicked() {
+                                    create_local = true;
+                                }
+                            });
+                        }
                     });
             });
         if let Some(path) = open {
             self.open_project(path);
         } else if let Some((path, a)) = action {
             self.run_context_action(&path, a);
-        } else if create {
-            self.new_project();
+        } else if create_local {
+            self.new_project_in_section(parrot_core::Section::Local);
         }
+        #[cfg(target_os = "macos")]
+        if create_icloud {
+            self.new_project_in_section(parrot_core::Section::ICloud);
+        }
+    }
+
+    /// One shelf section: heading + that section's project cards + a New Project
+    /// card. Returns true when the New card was clicked.
+    fn shelf_section(
+        &mut self,
+        ui: &mut Ui,
+        items: &[crate::shelf::ShelfItem],
+        section: parrot_core::Section,
+        heading: &str,
+        open: &mut Option<NodePath>,
+        action: &mut Option<(NodePath, ContextAction)>,
+    ) -> bool {
+        let mut create = false;
+        ui.label(text(
+            heading.to_uppercase(),
+            tokens::UI_SECTION,
+            tokens::TEXT_QUATERNARY,
+        ));
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0 * tokens::GRID, 6.0 * tokens::GRID);
+            for item in items.iter().filter(|i| i.section == section) {
+                let response = shelf_card(ui, item);
+                if response.clicked() {
+                    *open = Some(item.path.clone());
+                }
+                response.context_menu(|ui| {
+                    if let Ok(node) = self.state.node(&item.path) {
+                        for a in ContextAction::for_node(node) {
+                            if ui.button(a.label()).clicked() {
+                                *action = Some((item.path.clone(), a));
+                                ui.close_menu();
+                            }
+                        }
+                    }
+                });
+            }
+            if new_project_card(ui).clicked() {
+                create = true;
+            }
+        });
+        ui.add_space(6.0 * tokens::GRID);
+        create
     }
 
     fn centered_caption(&self, ui: &mut Ui, caption: &str) {
@@ -4018,6 +4178,8 @@ impl ParrotApp {
         }
         let mut open = true;
         let mut action = None;
+        #[cfg(target_os = "macos")]
+        let mut icloud_reveal = false;
         Self::modal("Library").open(&mut open).show(ctx, |ui| {
             ui.label(text(
                 "Library folder",
@@ -4047,6 +4209,48 @@ impl ParrotApp {
                     action = Some(Some(false));
                 }
             });
+            #[cfg(target_os = "macos")]
+            {
+                ui.separator();
+                ui.label(text(
+                    "iCloud library (this Mac only)",
+                    tokens::UI_CAPTION,
+                    tokens::TEXT_TERTIARY,
+                ));
+                let icloud_label = self
+                    .state
+                    .icloud_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "Not set up".to_string());
+                ui.label(text(
+                    icloud_label,
+                    tokens::UI_LABEL,
+                    tokens::TEXT_SECONDARY,
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("Use Default iCloud Folder").clicked() {
+                        if let Some(dir) = crate::icloud::default_icloud_library_dir() {
+                            std::fs::create_dir_all(&dir).ok();
+                            self.state.icloud_path = Some(dir.clone());
+                            self.remember_library();
+                            let _ = self.state.save();
+                            self.status = format!("iCloud library at {}", dir.display());
+                        } else {
+                            self.status =
+                                "iCloud Drive not available on this Mac.".to_string();
+                        }
+                    }
+                    if ui.button("Reveal in Finder").clicked() {
+                        icloud_reveal = true;
+                    }
+                });
+                ui.label(text(
+                    "Projects under the iCloud heading save here and sync via iCloud Drive. No account needed beyond iCloud Drive.",
+                    tokens::UI_CAPTION,
+                    tokens::TEXT_TERTIARY,
+                ));
+            }
         });
         match action {
             Some(Some(true)) => {
@@ -4061,6 +4265,12 @@ impl ParrotApp {
                 self.browse_library_folder();
             }
             None => {}
+        }
+        #[cfg(target_os = "macos")]
+        if icloud_reveal {
+            if let Some(dir) = self.state.icloud_path.clone() {
+                let _ = self.os.reveal_path(&dir);
+            }
         }
         self.show_library_dialog = open;
     }

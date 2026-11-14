@@ -8,6 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 const FILE_NAME: &str = "last-library.txt";
+const ICLOUD_FILE_NAME: &str = "last-icloud-library.txt";
 
 /// Where the last library's path is kept, if the platform's config directory is known.
 pub fn default_file() -> Option<PathBuf> {
@@ -26,6 +27,11 @@ pub fn default_file() -> Option<PathBuf> {
             .join("parrot")
     };
     Some(dir.join(FILE_NAME))
+}
+
+/// Where the last iCloud library's path is kept (macOS only).
+pub fn default_icloud_file() -> Option<PathBuf> {
+    default_file().map(|p| p.with_file_name(ICLOUD_FILE_NAME))
 }
 
 /// Records `library` in `file` as the library to reopen next launch.
@@ -51,6 +57,17 @@ pub fn recall(file: &Path) -> Option<PathBuf> {
         .ok()?;
     let path = PathBuf::from(text.trim());
     parrot_container::tree::has_library_entries(&path).then_some(path)
+}
+
+/// The remembered iCloud library root, even when it doesn't hold entries yet
+/// (first run creates it). `None` when never set.
+pub fn recall_icloud(file: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(file).ok()?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
 }
 
 #[cfg(test)]
