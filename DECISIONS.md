@@ -47,6 +47,7 @@ Deviations from the roadmap spec, with reasoning (roadmap §0 rule 4). Decisions
 | ENV-03 | 2026-10-31 | T-12-13 | Builds now use the Windows host toolchain (1.99.1-msvc) via `cargo.exe` from WSL. Tests run as native Windows binaries and `package_windows.sh` links a real `parrot-app.exe`. Resolves ENV-02's limitation. → RV-14. |
 | ENV-04 | 2026-10-31 | §0 rule 5, T-12-13 | `parrot/` is not a git repo by the owner's choice: no per-task commits or milestone tags; PROGRESS.md is the history. → RV-21. |
 | ENV-05 | 2026-11-14 | — | Google OAuth client ID/secret reach the binary only via compile-time env (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `option_env!`); release builds must export the repo's Actions secrets of the same names. Local builds without them compile fine and show Drive as "not configured". |
+| ENV-06 | 2026-11-14 | — | Release binaries come from `.github/workflows/release.yml` (`workflow_dispatch` on upstream `main` only — fork PR runs never receive secrets). Gate job (ubuntu + `scripts/check.sh`) must pass first; macOS (aarch64) and Windows (real MSVC link via `scripts/package_windows.sh`) jobs bake the Actions secrets in as step env and upload zipped artifacts (30-day retention) for manual Drive testing. No tag automation yet. |
 
 ## Build gates & dependencies
 
