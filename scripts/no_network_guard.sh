@@ -18,7 +18,12 @@ cd "$(dirname "$0")/.."
 # no legitimate async-runtime need; the TLS/HTTP-adjacent crates are defense-in-depth against
 # a transitive dependency quietly pulling in networking. Documented as a deliberate stricter
 # reading in DECISIONS.md.
-BANNED_CRATES=(reqwest hyper ureq tokio async-std isahc surf attohttpc curl native-tls openssl rustls)
+#
+# Exception (owner-approved, see DECISIONS.md BLD-07): `native-tls` is permitted as the TLS
+# backend for the Google Drive sync's blocking HTTPS client (`minreq`, itself never banned).
+# Rationale: platform TLS via pure-Rust FFI (SChannel / Security.framework), no async runtime,
+# no C build scripts on the shipped targets. Everything else on this list stays banned.
+BANNED_CRATES=(reqwest hyper ureq tokio async-std isahc surf attohttpc curl openssl rustls)
 
 METADATA_FILE="${1:-}"
 SCAN_ROOT="${2:-.}"

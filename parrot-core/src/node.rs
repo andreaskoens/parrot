@@ -42,6 +42,7 @@ pub enum Section {
     #[default]
     Local,
     ICloud,
+    GoogleDrive,
 }
 
 impl Section {
@@ -49,16 +50,22 @@ impl Section {
         matches!(self, Section::ICloud)
     }
 
+    pub fn is_google_drive(self) -> bool {
+        matches!(self, Section::GoogleDrive)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Section::Local => "local",
             Section::ICloud => "icloud",
+            Section::GoogleDrive => "googledrive",
         }
     }
 
     pub fn from_label(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "icloud" | "icloud drive" | "cloud" => Section::ICloud,
+            "googledrive" | "google drive" | "gdrive" => Section::GoogleDrive,
             _ => Section::Local,
         }
     }
@@ -74,7 +81,7 @@ pub struct Project {
     /// file. `None` = the app default. Opaque to this crate.
     pub language: Option<String>,
     /// Which store this project is saved in. Persisted in `.project-meta` as
-    /// `section=icloud|local`; missing (old libraries) means `Local`.
+    /// `section=icloud|googledrive|local`; missing (old libraries) means `Local`.
     pub section: Section,
 }
 

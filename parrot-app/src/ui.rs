@@ -468,6 +468,18 @@ pub struct ParrotApp {
     /// Where the last iCloud library root is remembered (macOS only); `None` in tests.
     #[allow(dead_code)]
     recent_icloud_file: Option<PathBuf>,
+    /// Google Drive OAuth tokens (all platforms); loaded from the config dir.
+    gdrive_tokens: Option<crate::gdrive::Tokens>,
+    /// Last Google Drive note for the status bar / Library dialog.
+    gdrive_note: String,
+    /// In-flight Drive sync outcome channel (worker thread → UI thread).
+    gdrive_sync_rx: Option<std::sync::mpsc::Receiver<crate::gdrive::SyncJobResult>>,
+    /// In-flight Drive Connect outcome channel.
+    gdrive_connect_rx: Option<std::sync::mpsc::Receiver<Result<crate::gdrive::Tokens, String>>>,
+    /// When local Drive edits were last saved and await upload.
+    gdrive_dirty_since: Option<std::time::Instant>,
+    /// When the remote was last polled.
+    gdrive_last_poll: Option<std::time::Instant>,
     counter: CounterUi,
 }
 
@@ -530,6 +542,12 @@ impl Default for ParrotApp {
             last_export_path: None,
             recent_library_file: None,
             recent_icloud_file: None,
+            gdrive_tokens: crate::gdrive::load_tokens(),
+            gdrive_note: String::new(),
+            gdrive_sync_rx: None,
+            gdrive_connect_rx: None,
+            gdrive_dirty_since: None,
+            gdrive_last_poll: None,
             counter: CounterUi::default(),
         }
     }
@@ -726,12 +744,16 @@ impl ParrotApp {
     }
 
     /// Creates a project in `section`, opens it and starts renaming it.
-    /// On non-macOS builds `ICloud` falls back to `Local` (iCloud UI hidden).
+    /// On non-macOS builds an iCloud section falls back to `Local` (iCloud UI
+    /// is hidden there); Google Drive works on all platforms.
     fn new_project_in_section(&mut self, section: parrot_core::Section) {
         #[cfg(not(target_os = "macos"))]
         let section = {
-            let _ = section;
-            parrot_core::Section::Local
+            if section.is_icloud() {
+                parrot_core::Section::Local
+            } else {
+                section
+            }
         };
         let path = self
             .state
@@ -772,6 +794,207 @@ impl ParrotApp {
             }
             Err(e) => format!("Error saving: {e}"),
         };
+        // Saved Drive edits await upload once the quiet period passes.
+        if self.status == "Saved." || self.status == "Auto saved." {
+            self.mark_gdrive_dirty();
+        }
+    }
+
+    /// Google Drive: uploads start once edits have been saved and quiet.
+    fn mark_gdrive_dirty(&mut self) {
+        if self.gdrive_tokens.is_some() && !self.state.gdrive_projects().is_empty() {
+            self.gdrive_dirty_since
+                .get_or_insert(std::time::Instant::now());
+        }
+    }
+
+    fn gdrive_connected(&self) -> bool {
+        self.gdrive_tokens.is_some()
+    }
+
+    fn gdrive_job_running(&self) -> bool {
+        self.gdrive_sync_rx.is_some() || self.gdrive_connect_rx.is_some()
+    }
+
+    /// Starts a Drive sync job (upload dirty + poll remote) on a worker thread.
+    /// `reason` is only for status notes ("Syncing…").
+    fn start_gdrive_sync(&mut self, reason: &str) {
+        if !self.gdrive_connected() || self.gdrive_sync_rx.is_some() {
+            return;
+        }
+        let Some(root) = self.state.library_path.clone() else {
+            return;
+        };
+        let Some(tokens) = self.gdrive_tokens.clone() else {
+            return;
+        };
+        // Snapshot under the live library; the worker never touches UI state.
+        let snapshot = crate::gdrive::snapshot_nodes(&self.state.library);
+        if !snapshot.iter().any(|n| {
+            matches!(
+                n,
+                parrot_core::Node::Project(p) if p.section.is_google_drive()
+            )
+        }) {
+            return;
+        }
+        let state = self.state.gdrive_state.clone();
+        self.gdrive_sync_rx = Some(crate::gdrive::spawn_sync(snapshot, state, root, tokens));
+        self.gdrive_dirty_since = None;
+        self.status = reason.to_string();
+    }
+
+    /// Pumps finished worker jobs and schedules the next poll. Called every frame.
+    fn pump_gdrive(&mut self, ctx: &egui::Context) {
+        // Finished Connect attempts.
+        if let Some(rx) = self.gdrive_connect_rx.take() {
+            match rx.try_recv() {
+                Ok(Ok(tokens)) => {
+                    self.gdrive_tokens = Some(tokens);
+                    self.gdrive_note = "Connected to Google Drive.".to_string();
+                    self.status = "Connected to Google Drive.".to_string();
+                    self.gdrive_last_poll = None;
+                }
+                Ok(Err(e)) => {
+                    self.gdrive_note = format!("Google Drive sign-in failed: {e}");
+                    self.status = self.gdrive_note.clone();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.gdrive_connect_rx = Some(rx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.gdrive_note = "Google Drive sign-in failed.".to_string();
+                }
+            }
+        }
+        // Finished syncs.
+        if let Some(rx) = self.gdrive_sync_rx.take() {
+            match rx.try_recv() {
+                Ok(out) => {
+                    self.gdrive_tokens = Some(out.tokens);
+                    if let Some(e) = out.error {
+                        self.gdrive_note = format!("Google Drive sync failed: {e}");
+                        self.status = self.gdrive_note.clone();
+                        // Retry later; keep the failure from hot-looping.
+                        self.gdrive_dirty_since = Some(std::time::Instant::now());
+                        self.gdrive_last_poll = Some(std::time::Instant::now());
+                    } else {
+                        self.state.gdrive_state = out.state;
+                        let (applied, trashed) = self
+                            .state
+                            .apply_gdrive_output(out.upserts, out.remote_deleted);
+                        if applied > 0 || out.uploaded > 0 || trashed > 0 {
+                            let _ = self.state.save();
+                        }
+                        self.state.save_gdrive_state();
+                        self.reset_selection();
+                        self.gdrive_last_poll = Some(std::time::Instant::now());
+                        let mut bits = Vec::new();
+                        if out.uploaded > 0 {
+                            bits.push(format!("{} up", out.uploaded));
+                        }
+                        if out.downloaded > 0 {
+                            bits.push(format!("{} down", out.downloaded));
+                        }
+                        if out.conflict_copies > 0 {
+                            bits.push(format!("{} conflict", out.conflict_copies));
+                        }
+                        if trashed > 0 {
+                            bits.push(format!("{trashed} trashed"));
+                        }
+                        let note = if bits.is_empty() {
+                            "Google Drive is up to date.".to_string()
+                        } else {
+                            format!("Google Drive sync: {}.", bits.join(", "))
+                        };
+                        self.gdrive_note = note.clone();
+                        self.status = note;
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.gdrive_sync_rx = Some(rx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.gdrive_note = "Google Drive sync failed.".to_string();
+                }
+            }
+        }
+        // Schedule: upload quiet edits, otherwise poll every 30s when clean.
+        if self.gdrive_connected()
+            && self.state.library_path.is_some()
+            && !self.gdrive_job_running()
+        {
+            let now = std::time::Instant::now();
+            let quiet_due = self.gdrive_dirty_since.is_some_and(|t| {
+                now.saturating_duration_since(t)
+                    >= std::time::Duration::from_secs(crate::gdrive::UPLOAD_QUIET_SECS)
+            });
+            let poll_due = self.gdrive_last_poll.is_none_or(|t| {
+                now.saturating_duration_since(t)
+                    >= std::time::Duration::from_secs(crate::gdrive::POLL_INTERVAL_SECS)
+            });
+            if quiet_due {
+                self.start_gdrive_sync("Syncing Google Drive…");
+            } else if poll_due && !self.unsaved_changes {
+                self.start_gdrive_sync("Checking Google Drive…");
+            }
+            // Wake up for the next quiet-expiry or poll tick.
+            let mut wakeups = vec![std::time::Duration::from_secs(
+                crate::gdrive::POLL_INTERVAL_SECS,
+            )];
+            if let Some(t) = self.gdrive_dirty_since {
+                let quiet = std::time::Duration::from_secs(crate::gdrive::UPLOAD_QUIET_SECS);
+                wakeups.push(quiet.saturating_sub(now.saturating_duration_since(t)));
+            }
+            if let Some(t) = self.gdrive_last_poll {
+                let poll = std::time::Duration::from_secs(crate::gdrive::POLL_INTERVAL_SECS);
+                wakeups.push(poll.saturating_sub(now.saturating_duration_since(t)));
+            }
+            if let Some(next) = wakeups.into_iter().min() {
+                ctx.request_repaint_after(next);
+            }
+        }
+        if self.gdrive_job_running() {
+            // Jobs finish on worker threads; poll for their outcomes.
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        }
+    }
+
+    /// Starts the browser OAuth flow (from the Library dialog's Connect button).
+    fn gdrive_connect(&mut self) {
+        if !crate::gdrive::is_configured() {
+            self.gdrive_note = "Google Drive is not configured in this build.".to_string();
+            self.status = self.gdrive_note.clone();
+            return;
+        }
+        if self.gdrive_job_running() {
+            return;
+        }
+        match crate::gdrive::begin_connect() {
+            None => {
+                self.gdrive_note = "Could not start Google sign-in.".to_string();
+                self.status = self.gdrive_note.clone();
+            }
+            Some((pending, url)) => {
+                if self.os.open_path(&std::path::PathBuf::from(url)).is_err() {
+                    self.gdrive_note = "Could not open the browser.".to_string();
+                    self.status = self.gdrive_note.clone();
+                    return;
+                }
+                self.gdrive_connect_rx = Some(crate::gdrive::spawn_connect(pending));
+                self.gdrive_note = "Waiting for Google sign-in in the browser…".to_string();
+                self.status = self.gdrive_note.clone();
+            }
+        }
+    }
+
+    /// Forgets the cached tokens (Library dialog's Disconnect button).
+    fn gdrive_disconnect(&mut self) {
+        crate::gdrive::clear_tokens();
+        self.gdrive_tokens = None;
+        self.gdrive_dirty_since = None;
+        self.gdrive_note = "Disconnected from Google Drive.".to_string();
+        self.status = self.gdrive_note.clone();
     }
 
     // --- Selection ------------------------------------------------------------------------
@@ -1327,6 +1550,7 @@ impl ParrotApp {
                 | ContextAction::MoveToTrash
                 | ContextAction::MoveToICloud
                 | ContextAction::MoveToLocal
+                | ContextAction::MoveToGDrive
         );
         match sidebar::apply_context_action(&mut self.state, path, action) {
             Ok(intent) => {
@@ -2018,6 +2242,11 @@ impl ParrotApp {
                                         self.add_menu(ui, parrot_core::Section::ICloud);
                                     });
                                 }
+                                if label == sidebar::GOOGLE_DRIVE_HEADING {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        self.add_menu(ui, parrot_core::Section::GoogleDrive);
+                                    });
+                                }
                             });
                             ui.add_space(tokens::GRID);
                         }
@@ -2044,6 +2273,7 @@ impl ParrotApp {
         let in_project = self.creation_parent().is_some();
         let new_project_label = match section {
             parrot_core::Section::ICloud => "New iCloud Project",
+            parrot_core::Section::GoogleDrive => "New Google Drive Project",
             parrot_core::Section::Local => "New Project",
         };
         ui.menu_button(
@@ -2595,15 +2825,12 @@ impl ParrotApp {
     /// iCloud library is visible on the landing page too.
     fn shelf(&mut self, ui: &mut Ui) {
         let items = crate::shelf::items(&self.state);
-        #[cfg(target_os = "macos")]
-        let show_sections = true;
-        #[cfg(not(target_os = "macos"))]
-        let show_sections = false;
         let mut open = None;
         let mut action = None;
         let mut create_local = false;
         #[cfg(target_os = "macos")]
         let mut create_icloud = false;
+        let mut create_gdrive = false;
         egui::ScrollArea::vertical()
             .id_salt("shelf")
             .auto_shrink([false, false])
@@ -2628,54 +2855,38 @@ impl ParrotApp {
                             tokens::TEXT_TERTIARY,
                         ));
                         ui.add_space(6.0 * tokens::GRID);
-                        if show_sections {
-                            #[allow(clippy::single_match)]
-                            match self.shelf_section(
-                                ui,
-                                &items,
-                                parrot_core::Section::Local,
-                                "Projects",
-                                &mut open,
-                                &mut action,
-                            ) {
-                                true => create_local = true,
-                                false => {}
-                            }
-                            #[cfg(target_os = "macos")]
-                            if self.shelf_section(
-                                ui,
-                                &items,
-                                parrot_core::Section::ICloud,
-                                "iCloud",
-                                &mut open,
-                                &mut action,
-                            ) {
-                                create_icloud = true;
-                            }
-                        } else {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing =
-                                    egui::vec2(6.0 * tokens::GRID, 6.0 * tokens::GRID);
-                                for item in &items {
-                                    let response = shelf_card(ui, item);
-                                    if response.clicked() {
-                                        open = Some(item.path.clone());
-                                    }
-                                    response.context_menu(|ui| {
-                                        if let Ok(node) = self.state.node(&item.path) {
-                                            for a in ContextAction::for_node(node) {
-                                                if ui.button(a.label()).clicked() {
-                                                    action = Some((item.path.clone(), a));
-                                                    ui.close_menu();
-                                                }
-                                            }
-                                        }
-                                    });
-                                }
-                                if new_project_card(ui).clicked() {
-                                    create_local = true;
-                                }
-                            });
+                        #[allow(clippy::single_match)]
+                        match self.shelf_section(
+                            ui,
+                            &items,
+                            parrot_core::Section::Local,
+                            "Projects",
+                            &mut open,
+                            &mut action,
+                        ) {
+                            true => create_local = true,
+                            false => {}
+                        }
+                        #[cfg(target_os = "macos")]
+                        if self.shelf_section(
+                            ui,
+                            &items,
+                            parrot_core::Section::ICloud,
+                            "iCloud",
+                            &mut open,
+                            &mut action,
+                        ) {
+                            create_icloud = true;
+                        }
+                        if self.shelf_section(
+                            ui,
+                            &items,
+                            parrot_core::Section::GoogleDrive,
+                            "Google Drive",
+                            &mut open,
+                            &mut action,
+                        ) {
+                            create_gdrive = true;
                         }
                     });
             });
@@ -2689,6 +2900,9 @@ impl ParrotApp {
         #[cfg(target_os = "macos")]
         if create_icloud {
             self.new_project_in_section(parrot_core::Section::ICloud);
+        }
+        if create_gdrive {
+            self.new_project_in_section(parrot_core::Section::GoogleDrive);
         }
     }
 
@@ -4251,6 +4465,63 @@ impl ParrotApp {
                     tokens::TEXT_TERTIARY,
                 ));
             }
+            // Google Drive: true OAuth/API connection, all platforms.
+            {
+                ui.separator();
+                ui.label(text(
+                    "Google Drive (all platforms)",
+                    tokens::UI_CAPTION,
+                    tokens::TEXT_TERTIARY,
+                ));
+                let drive_line = if self.gdrive_connected() {
+                    "Connected — Drive-section projects sync to your Parrot folder."
+                        .to_string()
+                } else if crate::gdrive::is_configured() {
+                    "Not connected.".to_string()
+                } else {
+                    "Not configured in this build.".to_string()
+                };
+                ui.label(text(
+                    drive_line,
+                    tokens::UI_LABEL,
+                    tokens::TEXT_SECONDARY,
+                ));
+                if !self.gdrive_note.is_empty() {
+                    ui.label(text(
+                        self.gdrive_note.clone(),
+                        tokens::UI_CAPTION,
+                        tokens::TEXT_TERTIARY,
+                    ));
+                }
+                ui.horizontal(|ui| {
+                    if self.gdrive_connected() {
+                        if ui.button("Disconnect").clicked() {
+                            self.gdrive_disconnect();
+                        }
+                        if ui
+                            .button("Sync now")
+                            .on_hover_text("Upload edits and check Drive for changes")
+                            .clicked()
+                        {
+                            self.start_gdrive_sync("Syncing Google Drive…");
+                        }
+                    } else if ui
+                        .add_enabled(
+                            crate::gdrive::is_configured()
+                                && !self.gdrive_job_running(),
+                            egui::Button::new("Connect Google Drive…"),
+                        )
+                        .clicked()
+                    {
+                        self.gdrive_connect();
+                    }
+                });
+                ui.label(text(
+                    "Projects under the Google Drive heading sync as one zip per project through the Google Drive API.",
+                    tokens::UI_CAPTION,
+                    tokens::TEXT_TERTIARY,
+                ));
+            }
         });
         match action {
             Some(Some(true)) => {
@@ -5032,6 +5303,7 @@ impl ParrotApp {
                 ctx.request_repaint_after(AUTOSAVE_IDLE.saturating_sub(last_edit.elapsed()));
             }
         }
+        self.pump_gdrive(ctx);
         self.handle_shortcuts(ctx);
         self.menu_bar(ctx);
         self.toolbar(ctx);
