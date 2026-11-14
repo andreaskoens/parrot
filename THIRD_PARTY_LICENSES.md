@@ -75,3 +75,13 @@ The UI's icons come from the Phosphor icon font (regular weight), embedded by th
 `egui-phosphor` 0.7 crate (MIT OR Apache-2.0). The Phosphor icon set itself is MIT-licensed
 (© Phosphor Icons). No icon file is copied into this repository; the font ships inside the crate.
 **Reused under MIT — resolved.**
+
+## Export styles: Ariadne's built-in CSS (same author)
+
+The four manuscript-style CSS export themes in `parrot-app/src/export_styles.rs`
+(Manuscript, Student, Paperback Novel, Professional) are adapted verbatim from Ariadne's
+built-in export styles. Ariadne is MIT-licensed and by the same author; the CSS text is an
+original work (no third-party font, image, or text bundled — only generic family names like
+`Georgia` and `Courier New`). The two "Parrot Default"/"Parrot Compact" styles are original
+to this project.
+**Reused under MIT — resolved.**

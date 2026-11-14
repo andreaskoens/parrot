@@ -294,7 +294,8 @@ mod tests {
         assert_eq!(std::fs::read_dir(dir.path()).expect("dir").count(), 0);
 
         // Quick Export writes directly and never opens the modal.
-        modal.export(&content).expect("first export");
+        let (first, _) = modal.export(&content);
+        first.expect("first export");
         let before = std::fs::read_dir(dir.path()).expect("dir").count();
         let path = modal.quick_export(&content, "Again").expect("quick export");
         assert!(!modal.open);

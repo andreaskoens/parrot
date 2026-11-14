@@ -10,6 +10,7 @@ pub mod editor;
 pub mod editor_keys;
 pub mod editor_state;
 pub mod export_modal;
+pub mod export_styles;
 pub mod export_ui;
 pub mod filters_ui;
 pub mod first_run;

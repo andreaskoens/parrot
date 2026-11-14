@@ -12,13 +12,32 @@
 //! DECISIONS.md) — its exact target-format-specific semantics aren't confirmed, so treating it
 //! as raw unescaped markup risked structural injection for no confirmed benefit.
 
+use crate::css::ExportTheme;
 use parrot_core::{Inline, Paragraph, SheetContent, TagKind};
 
 pub fn export_html(sheet: &SheetContent) -> String {
+    export_html_with(sheet, &ExportTheme::builtin())
+}
+
+/// [`export_html`], with a stylesheet applied: the theme's raw CSS is embedded verbatim
+/// in a `<style>` element (wrapped so the output stays well-formed XML even if the CSS
+/// contains `<` or `&`, which HTML parses as raw text). A theme without CSS emits no
+/// `<style>` tag, byte-identical to [`export_html`].
+pub fn export_html_with(sheet: &SheetContent, theme: &ExportTheme) -> String {
     format!(
-        "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"/><title>Export</title></head><body>{}</body></html>",
+        "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"/><title>Export</title>{}</head><body>{}</body></html>",
+        style_block(&theme.raw_css),
         render_paragraphs(&sheet.paragraphs)
     )
+}
+
+/// A `<style>` element for `css`, or nothing when it is blank.
+fn style_block(css: &str) -> String {
+    if css.trim().is_empty() {
+        String::new()
+    } else {
+        format!("<style>/*<![CDATA[*/\n{css}\n/*]]>*/</style>")
+    }
 }
 
 fn render_paragraphs(paragraphs: &[Paragraph]) -> String {
@@ -219,5 +238,52 @@ mod tests {
         // values additionally need '"' escaped since they're themselves quoted with it.
         assert!(html.contains("&lt;script&gt;&amp;\"&lt;/script&gt;"));
         assert!(html.contains("href=\"http://example.com/?a=1&amp;b=&quot;2&quot;\""));
+    }
+
+    #[test]
+    fn unstyled_output_has_no_style_element() {
+        let html = export_html(&full_tag_document());
+        assert!(
+            !html.contains("<style>"),
+            "default export must not gain a style tag"
+        );
+    }
+
+    #[test]
+    fn styled_output_embeds_the_css_verbatim() {
+        use quick_xml::events::Event;
+        use quick_xml::reader::Reader;
+        let css = "body { color: #112233; }\nh1 { font-size: 28pt; }";
+        let html = export_html_with(&full_tag_document(), &ExportTheme::from_css(css));
+        assert!(
+            html.contains("<style>"),
+            "styled export embeds a style element"
+        );
+        assert!(html.contains(css), "the stylesheet is embedded verbatim");
+        // Still well-formed XML: the CDATA wrapper keeps the CSS from breaking parsing.
+        let mut reader = Reader::from_str(&html);
+        loop {
+            match reader.read_event() {
+                Ok(Event::Eof) => break,
+                Ok(_) => {}
+                Err(e) => panic!("styled HTML is not well-formed XML: {e}"),
+            }
+        }
+    }
+
+    #[test]
+    fn blank_css_is_the_same_as_no_css() {
+        let plain = export_html(&full_tag_document());
+        let builtin = ExportTheme::builtin();
+        assert_eq!(
+            export_html_with(&full_tag_document(), &ExportTheme::from_css("  \n ")),
+            plain,
+            "blank stylesheets embed nothing"
+        );
+        assert_eq!(
+            export_html_with(&full_tag_document(), &builtin),
+            plain,
+            "builtin theme is byte-identical to no theme"
+        );
     }
 }
